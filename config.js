@@ -7,4 +7,4 @@
 // Left as-is, it assumes the backend is running locally on port 5000,
 // which is what you want while testing before deployment.
 // ---------------------------------------------------------------------
-const API_BASE = "http://127.0.0.1:5000";
+const API_BASE = "https://health-assistant-oplu.onrender.com";
