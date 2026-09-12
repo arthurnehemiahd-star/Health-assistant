@@ -249,3 +249,113 @@ main{ flex:1; padding:44px 56px 80px; max-width:900px; }
         padding-left: 1rem;
     }
 }
+
+/* ==========================================================================
+   VOICE FEATURES
+   ========================================================================== */
+
+.ask-row #voiceBtn {
+  width: 48px;
+  flex-shrink: 0;
+  padding: 0;
+  background: var(--sage-light);
+  color: var(--teal-900);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 18px;
+  cursor: pointer;
+  transition:
+    background .15s ease,
+    border-color .15s ease,
+    transform .15s ease;
+}
+
+.ask-row #voiceBtn:hover {
+  background: var(--sage);
+  border-color: var(--sage);
+}
+
+.ask-row #voiceBtn.listening {
+  background: var(--coral-soft);
+  border-color: var(--coral);
+  color: var(--coral);
+  animation: voicePulse 1.2s infinite;
+}
+
+.ask-row #voiceBtn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+
+@keyframes voicePulse {
+  0% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.06);
+  }
+
+  100% {
+    transform: scale(1);
+  }
+}
+
+.voice-status {
+  min-height: 20px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.answer-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.voice-action {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--teal-700);
+  border-radius: 20px;
+  padding: 7px 13px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background .15s ease,
+    border-color .15s ease,
+    color .15s ease;
+}
+
+.voice-action:hover {
+  background: var(--sage-light);
+  border-color: var(--sage);
+  color: var(--teal-900);
+}
+
+@media (max-width: 600px) {
+
+  .ask-row {
+    flex-wrap: wrap;
+  }
+
+  .ask-row input {
+    width: 100%;
+    flex-basis: 100%;
+  }
+
+  .ask-row #voiceBtn {
+    height: 44px;
+  }
+
+  .ask-row #askBtn {
+    height: 44px;
+    flex: 1;
+  }
+}
