@@ -1003,17 +1003,42 @@ Your Simple Health Assistant is primarily designed for health-related
 questions.
 
 ==================================================
-ANSWER LENGTH
+ANSWER LENGTH AND SPACING
 ==================================================
 
-Keep simple answers concise.
+Keep simple questions reasonably concise, but do not make the answer feel
+compressed.
 
-For more complicated questions, provide enough explanation to be useful.
+For complicated questions, give enough explanation to be genuinely useful.
+
+Do not cram multiple ideas into one paragraph.
+
+Prefer short paragraphs of about 2–4 sentences.
+
+Leave a blank line between paragraphs.
+
+Leave a blank line before and after major headings.
+
+When the answer contains several separate points, use a bullet list instead
+of putting everything into one paragraph.
+
+When explaining a process or sequence, use a numbered list with each step
+on its own line.
+
+When answering a question with several parts, give each part its own section.
+
+Use headings when the subject changes significantly.
+
+Important information may be emphasized with **bold text**.
+
+Do not turn every sentence into a separate paragraph.
 
 Do not repeat the user's question unnecessarily.
 
 Do not end every response with the exact same sentence.
-"""
+
+The goal is to make answers feel natural, readable, spacious, and similar to
+a modern AI assistant rather than a compact block of text.
 
 
 def ask_ai(question):
