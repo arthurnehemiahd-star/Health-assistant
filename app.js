@@ -404,6 +404,157 @@ async function goTo(id){
     document.querySelectorAll(".suggest-chip").forEach(chip=>{
       chip.addEventListener("click", ()=>{
         document.getElementById("askInput").value = chip.dataset.q;
+         function escapeHtml(text) {
+    return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+
+function renderMarkdown(text) {
+    if (!text) {
+        return "";
+    }
+
+    const lines = String(text).replace(/\r\n/g, "\n").split("\n");
+
+    let html = "";
+    let paragraph = [];
+    let listType = null;
+
+    function closeList() {
+        if (listType === "ul") {
+            html += "</ul>";
+        } else if (listType === "ol") {
+            html += "</ol>";
+        }
+
+        listType = null;
+    }
+
+    function closeParagraph() {
+        if (paragraph.length === 0) {
+            return;
+        }
+
+        const content = paragraph.join(" ").trim();
+
+        if (content) {
+            html += `<p>${formatInlineMarkdown(content)}</p>`;
+        }
+
+        paragraph = [];
+    }
+
+    function formatInlineMarkdown(value) {
+        let result = escapeHtml(value);
+
+        // Bold: **text**
+        result = result.replace(
+            /\*\*(.+?)\*\*/g,
+            "<strong>$1</strong>"
+        );
+
+        // Italic: *text*
+        result = result.replace(
+            /(^|[^*])\*([^*]+)\*(?!\*)/g,
+            "$1<em>$2</em>"
+        );
+
+        // Inline code: `text`
+        result = result.replace(
+            /`([^`]+)`/g,
+            "<code>$1</code>"
+        );
+
+        return result;
+    }
+
+    for (const rawLine of lines) {
+        const line = rawLine.trim();
+
+        // Empty line = new paragraph/section
+        if (!line) {
+            closeParagraph();
+            closeList();
+            continue;
+        }
+
+        // ## Heading
+        if (line.startsWith("## ")) {
+            closeParagraph();
+            closeList();
+
+            html += `<h2>${formatInlineMarkdown(
+                line.substring(3)
+            )}</h2>`;
+
+            continue;
+        }
+
+        // ### Heading
+        if (line.startsWith("### ")) {
+            closeParagraph();
+            closeList();
+
+            html += `<h3>${formatInlineMarkdown(
+                line.substring(4)
+            )}</h3>`;
+
+            continue;
+        }
+
+        // Bullet list
+        const bulletMatch = line.match(/^[-*]\s+(.+)$/);
+
+        if (bulletMatch) {
+            closeParagraph();
+
+            if (listType !== "ul") {
+                closeList();
+                html += "<ul>";
+                listType = "ul";
+            }
+
+            html += `<li>${formatInlineMarkdown(
+                bulletMatch[1]
+            )}</li>`;
+
+            continue;
+        }
+
+        // Numbered list
+        const numberedMatch = line.match(/^\d+\.\s+(.+)$/);
+
+        if (numberedMatch) {
+            closeParagraph();
+
+            if (listType !== "ol") {
+                closeList();
+                html += "<ol>";
+                listType = "ol";
+            }
+
+            html += `<li>${formatInlineMarkdown(
+                numberedMatch[1]
+            )}</li>`;
+
+            continue;
+        }
+
+        // Normal text
+        closeList();
+        paragraph.push(line);
+    }
+
+    closeParagraph();
+    closeList();
+
+    return html;
+}
         handleAsk();
       });
     });
