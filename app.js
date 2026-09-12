@@ -583,7 +583,7 @@ async function handleAsk(){
   if(result.kind === "faq"){
     box.innerHTML = `
       <div class="from">${result.topic.icon} ${result.topic.name}</div>
-      <p class="answer-text">${result.answer}</p>
+      <div class="answer-text">${renderMarkdown(result.answer)}</div>
       <div style="margin-top:12px;">
         <button class="suggest-chip" data-goto="${result.topic.id}">More on ${result.topic.name.toLowerCase()} →</button>
       </div>
