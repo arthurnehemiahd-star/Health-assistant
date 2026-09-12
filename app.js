@@ -1,30 +1,24 @@
+```javascript
 /* ------------------------------------------------------------------------
    FRONTEND LOGIC
    Every fact about topics, FAQ/AI answers, and account/session detail
-   comes from the backend via fetch(`${API_BASE}/api/...`). Nothing here
-   hardcodes health content or stores passwords — this file only renders
-   whatever the API returns.
+   comes from the backend via fetch(`${API_BASE}/api/...`).
 
-   Structure:
-     - Not logged in  -> renderGate() : a login/signup card, nothing else
-                          reachable until the person signs in.
-     - Logged in      -> renderApp()  : the normal sidebar + pages UI.
-
-   AI ANSWER FORMATTING:
-     - Markdown-style headings
-     - Bold text
-     - Italic text
-     - Bullet lists
-     - Numbered lists
-     - Paragraph spacing
-     - Safe HTML escaping
+   Voice features:
+     - Push-to-talk
+     - Continuous conversation mode
+     - Speech-to-text
+     - Text-to-speech
+     - Automatic conversation listening
 ------------------------------------------------------------------------ */
 
 // API_BASE comes from config.js, loaded before this file.
 
-// credentials: 'include' is required on every call — it's what makes
-// the browser send/receive the login session cookie even though the
-// frontend and backend are on two different domains once deployed.
+
+/* ========================================================================
+   API
+   ======================================================================== */
+
 const API = {
   topics: () =>
     fetch(`${API_BASE}/api/topics`, {
@@ -130,17 +124,719 @@ let USER = null;
 let current = "home";
 
 
-/* ==========================================================================
-   SAFE MARKDOWN RENDERER
-   ========================================================================== */
+/* ========================================================================
+   VOICE SYSTEM
+   ======================================================================== */
 
 /*
-   Escape HTML before inserting AI-generated text into the page.
+   Browser support.
 
-   This is important because the AI response must be treated as text first,
-   not as trusted HTML.
+   Chrome and Edge normally expose SpeechRecognition as:
+     window.SpeechRecognition
+   Some browsers expose:
+     window.webkitSpeechRecognition
 */
+
+const SpeechRecognition =
+  window.SpeechRecognition ||
+  window.webkitSpeechRecognition ||
+  null;
+
+
+/*
+   Voice state.
+*/
+
+let recognition = null;
+
+let voiceMode = "none";
+// none
+// push
+// conversation
+
+let voiceListening = false;
+let voiceSpeaking = false;
+let conversationShouldContinue = false;
+
+let lastVoiceQuestion = "";
+
+
+/*
+   Speech synthesis.
+
+   We use the browser's built-in speech engine for the first version.
+*/
+
+function speakText(text, afterSpeak = null) {
+
+  if (!("speechSynthesis" in window)) {
+    if (afterSpeak) {
+      afterSpeak();
+    }
+    return;
+  }
+
+  const cleanText = String(text || "")
+    .replace(/#{1,6}\s+/g, "")
+    .replace(/\*\*/g, "")
+    .replace(/\*/g, "")
+    .replace(/`/g, "")
+    .replace(/\n+/g, ". ")
+    .trim();
+
+  if (!cleanText) {
+    if (afterSpeak) {
+      afterSpeak();
+    }
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+
+  const utterance =
+    new SpeechSynthesisUtterance(cleanText);
+
+  /*
+     A natural but moderate voice speed.
+  */
+  utterance.rate = 0.95;
+  utterance.pitch = 1;
+  utterance.volume = 1;
+
+  /*
+     Prefer an English voice when available.
+  */
+  const voices =
+    window.speechSynthesis.getVoices();
+
+  const preferredVoice =
+    voices.find(v =>
+      /^en/i.test(v.lang) &&
+      /Google|Microsoft|Samantha|Natural/i.test(v.name)
+    ) ||
+    voices.find(v => /^en/i.test(v.lang)) ||
+    voices[0];
+
+  if (preferredVoice) {
+    utterance.voice = preferredVoice;
+  }
+
+
+  voiceSpeaking = true;
+  updateVoiceUI();
+
+
+  utterance.onend = () => {
+
+    voiceSpeaking = false;
+
+    updateVoiceUI();
+
+    if (afterSpeak) {
+      afterSpeak();
+    }
+  };
+
+
+  utterance.onerror = () => {
+
+    voiceSpeaking = false;
+
+    updateVoiceUI();
+
+    if (afterSpeak) {
+      afterSpeak();
+    }
+  };
+
+
+  window.speechSynthesis.speak(utterance);
+}
+
+
+/*
+   Stop text-to-speech.
+*/
+
+function stopSpeaking() {
+
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.cancel();
+  }
+
+  voiceSpeaking = false;
+
+  updateVoiceUI();
+}
+
+
+/*
+   Check whether speech recognition is available.
+*/
+
+function voiceSupported() {
+  return !!SpeechRecognition;
+}
+
+
+/*
+   Create recognition object.
+*/
+
+function createRecognition() {
+
+  if (!voiceSupported()) {
+    return null;
+  }
+
+  const rec =
+    new SpeechRecognition();
+
+  /*
+     We want normal conversational speech.
+  */
+  rec.lang = "en-US";
+
+  /*
+     Push-to-talk only needs one final result.
+
+     Conversation mode restarts recognition after each answer.
+  */
+  rec.continuous = false;
+
+  /*
+     We show interim speech in the input.
+  */
+  rec.interimResults = true;
+
+  rec.maxAlternatives = 1;
+
+
+  rec.onstart = () => {
+
+    voiceListening = true;
+
+    updateVoiceUI();
+  };
+
+
+  rec.onresult = event => {
+
+    let transcript = "";
+    let finalTranscript = "";
+
+
+    for (
+      let i = event.resultIndex;
+      i < event.results.length;
+      i++
+    ) {
+
+      const text =
+        event.results[i][0].transcript;
+
+      transcript += text;
+
+      if (event.results[i].isFinal) {
+        finalTranscript += text;
+      }
+    }
+
+
+    const input =
+      document.getElementById("askInput");
+
+
+    if (input && transcript) {
+      input.value = transcript.trim();
+    }
+
+
+    /*
+       Once we have final speech, send it to the assistant.
+    */
+
+    if (finalTranscript.trim()) {
+
+      const question =
+        finalTranscript.trim();
+
+      lastVoiceQuestion = question;
+
+      if (input) {
+        input.value = question;
+      }
+
+      /*
+         Stop recognition before asking the AI.
+      */
+      try {
+        rec.stop();
+      } catch (error) {
+        console.warn("Recognition stop:", error);
+      }
+
+
+      /*
+         The actual answer is handled by handleAsk().
+      */
+      handleAsk({
+        voice: true,
+        conversation:
+          voiceMode === "conversation"
+      });
+    }
+  };
+
+
+  rec.onerror = event => {
+
+    console.warn(
+      "Speech recognition error:",
+      event.error
+    );
+
+    voiceListening = false;
+
+    updateVoiceUI();
+
+
+    /*
+       Some errors are normal browser behavior.
+    */
+
+    if (
+      event.error === "not-allowed" ||
+      event.error === "service-not-allowed"
+    ) {
+
+      showVoiceMessage(
+        "Microphone access was blocked. Please allow microphone access in the browser."
+      );
+
+      conversationShouldContinue = false;
+
+      return;
+    }
+
+
+    if (event.error === "no-speech") {
+
+      /*
+         In conversation mode, keep listening.
+      */
+
+      if (
+        voiceMode === "conversation" &&
+        conversationShouldContinue &&
+        !voiceSpeaking
+      ) {
+
+        setTimeout(() => {
+          startConversationListening();
+        }, 500);
+      }
+
+      return;
+    }
+  };
+
+
+  rec.onend = () => {
+
+    voiceListening = false;
+
+    updateVoiceUI();
+
+
+    /*
+       Conversation mode:
+       after recognition ends, we only restart when the
+       previous AI response has finished speaking.
+    */
+
+    if (
+      voiceMode === "conversation" &&
+      conversationShouldContinue &&
+      !voiceSpeaking
+    ) {
+
+      /*
+         A short delay makes the transition feel more natural.
+      */
+
+      setTimeout(() => {
+
+        if (
+          voiceMode === "conversation" &&
+          conversationShouldContinue &&
+          !voiceSpeaking
+        ) {
+          startConversationListening();
+        }
+
+      }, 400);
+    }
+  };
+
+
+  return rec;
+}
+
+
+/*
+   Initialize recognition.
+*/
+
+function ensureRecognition() {
+
+  if (!voiceSupported()) {
+
+    showVoiceMessage(
+      "Voice recognition is not supported in this browser. Chrome or Edge is recommended."
+    );
+
+    return false;
+  }
+
+
+  if (!recognition) {
+    recognition = createRecognition();
+  }
+
+
+  return !!recognition;
+}
+
+
+/*
+   Start push-to-talk.
+*/
+
+function startPushToTalk() {
+
+  if (!ensureRecognition()) {
+    return;
+  }
+
+
+  /*
+     Stop any conversation mode.
+  */
+
+  conversationShouldContinue = false;
+  voiceMode = "push";
+
+  stopSpeaking();
+
+
+  const input =
+    document.getElementById("askInput");
+
+  if (input) {
+    input.value = "";
+    input.placeholder = "Listening…";
+  }
+
+
+  try {
+
+    recognition.start();
+
+  } catch (error) {
+
+    console.warn(
+      "Could not start recognition:",
+      error
+    );
+  }
+
+
+  updateVoiceUI();
+}
+
+
+/*
+   Start continuous conversation.
+*/
+
+function startConversation() {
+
+  if (!ensureRecognition()) {
+    return;
+  }
+
+
+  stopSpeaking();
+
+  voiceMode = "conversation";
+
+  conversationShouldContinue = true;
+
+  const input =
+    document.getElementById("askInput");
+
+  if (input) {
+    input.value = "";
+    input.placeholder = "Conversation mode is listening…";
+  }
+
+
+  startConversationListening();
+
+  updateVoiceUI();
+}
+
+
+/*
+   Start the actual microphone listener for conversation mode.
+*/
+
+function startConversationListening() {
+
+  if (
+    !conversationShouldContinue ||
+    voiceSpeaking ||
+    voiceListening
+  ) {
+    return;
+  }
+
+
+  if (!recognition) {
+    recognition = createRecognition();
+  }
+
+
+  try {
+
+    recognition.start();
+
+  } catch (error) {
+
+    /*
+       Calling start while already starting can throw.
+       We simply wait for the current recognition cycle.
+    */
+
+    console.warn(
+      "Conversation recognition:",
+      error
+    );
+  }
+}
+
+
+/*
+   Stop all voice activity.
+*/
+
+function stopVoice() {
+
+  conversationShouldContinue = false;
+
+  voiceMode = "none";
+
+  voiceListening = false;
+
+  stopSpeaking();
+
+
+  if (recognition) {
+
+    try {
+      recognition.stop();
+    } catch (error) {
+      console.warn(
+        "Recognition stop:",
+        error
+      );
+    }
+  }
+
+
+  const input =
+    document.getElementById("askInput");
+
+  if (input) {
+    input.placeholder =
+      "e.g. what should I do for a headache?";
+  }
+
+
+  updateVoiceUI();
+}
+
+
+/*
+   Display voice-related status.
+*/
+
+function showVoiceMessage(message) {
+
+  const box =
+    document.getElementById("voiceStatus");
+
+  if (!box) {
+    return;
+  }
+
+  box.textContent = message;
+  box.classList.add("show");
+}
+
+
+/*
+   Clear voice status.
+*/
+
+function clearVoiceMessage() {
+
+  const box =
+    document.getElementById("voiceStatus");
+
+  if (!box) {
+    return;
+  }
+
+  box.textContent = "";
+  box.classList.remove("show");
+}
+
+
+/*
+   Update voice controls.
+*/
+
+function updateVoiceUI() {
+
+  const pushBtn =
+    document.getElementById("pushVoiceBtn");
+
+  const conversationBtn =
+    document.getElementById("conversationVoiceBtn");
+
+  const stopBtn =
+    document.getElementById("stopVoiceBtn");
+
+  const status =
+    document.getElementById("voiceStatus");
+
+
+  if (!pushBtn && !conversationBtn && !stopBtn) {
+    return;
+  }
+
+
+  /*
+     Push-to-talk button.
+  */
+
+  if (pushBtn) {
+
+    if (
+      voiceMode === "push" &&
+      voiceListening
+    ) {
+
+      pushBtn.textContent =
+        "🔴 Listening…";
+
+      pushBtn.classList.add("active");
+
+    } else {
+
+      pushBtn.textContent =
+        "🎙️ Push to Talk";
+
+      pushBtn.classList.remove("active");
+    }
+  }
+
+
+  /*
+     Conversation button.
+  */
+
+  if (conversationBtn) {
+
+    if (voiceMode === "conversation") {
+
+      conversationBtn.textContent =
+        voiceSpeaking
+          ? "🔊 Assistant speaking…"
+          : voiceListening
+            ? "🎙️ Listening…"
+            : "🗣️ Conversation active";
+
+      conversationBtn.classList.add("active");
+
+    } else {
+
+      conversationBtn.textContent =
+        "🗣️ Conversation";
+
+      conversationBtn.classList.remove("active");
+    }
+  }
+
+
+  /*
+     Stop button.
+  */
+
+  if (stopBtn) {
+
+    stopBtn.style.display =
+      voiceMode !== "none"
+        ? "inline-flex"
+        : "none";
+  }
+
+
+  /*
+     Status text.
+  */
+
+  if (status) {
+
+    if (voiceSpeaking) {
+
+      status.textContent =
+        "🔊 Assistant is speaking…";
+
+      status.classList.add("show");
+
+    } else if (voiceListening) {
+
+      status.textContent =
+        "🎙️ Listening…";
+
+      status.classList.add("show");
+
+    } else if (voiceMode === "conversation") {
+
+      status.textContent =
+        "🗣️ Conversation mode is ready.";
+
+      status.classList.add("show");
+
+    } else {
+
+      status.textContent = "";
+
+      status.classList.remove("show");
+    }
+  }
+}
+
+
+/* ========================================================================
+   SAFE MARKDOWN RENDERER
+   ======================================================================== */
+
 function escapeHtml(text) {
+
   return String(text)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -150,62 +846,46 @@ function escapeHtml(text) {
 }
 
 
-/*
-   Format inline Markdown-like elements.
-
-   Supported:
-     **bold**
-     *italic*
-     `inline code`
-*/
 function formatInlineMarkdown(value) {
-  let result = escapeHtml(value);
 
-  // Bold
+  let result =
+    escapeHtml(value);
+
+
   result = result.replace(
     /\*\*(.+?)\*\*/g,
     "<strong>$1</strong>"
   );
 
-  // Italic
+
   result = result.replace(
     /(^|[^*])\*([^*]+)\*(?!\*)/g,
     "$1<em>$2</em>"
   );
 
-  // Inline code
+
   result = result.replace(
     /`([^`]+)`/g,
     "<code>$1</code>"
   );
 
+
   return result;
 }
 
 
-/*
-   Convert the AI's Markdown-style response into safe HTML.
-
-   Supported:
-     ## Heading
-     ### Subheading
-     - Bullet
-     * Bullet
-     1. Numbered item
-     **Bold**
-     *Italic*
-     `code`
-
-   Blank lines become natural paragraph/section breaks.
-*/
 function renderMarkdown(text) {
+
   if (!text) {
     return "";
   }
 
-  const lines = String(text)
-    .replace(/\r\n/g, "\n")
-    .split("\n");
+
+  const lines =
+    String(text)
+      .replace(/\r\n/g, "\n")
+      .split("\n");
+
 
   let html = "";
   let paragraph = [];
@@ -213,8 +893,10 @@ function renderMarkdown(text) {
 
 
   function closeList() {
+
     if (listType === "ul") {
       html += "</ul>";
+
     } else if (listType === "ol") {
       html += "</ol>";
     }
@@ -224,126 +906,139 @@ function renderMarkdown(text) {
 
 
   function closeParagraph() {
+
     if (paragraph.length === 0) {
       return;
     }
 
-    const content = paragraph.join(" ").trim();
+
+    const content =
+      paragraph.join(" ").trim();
+
 
     if (content) {
-      html += `<p>${formatInlineMarkdown(content)}</p>`;
+
+      html +=
+        `<p>${formatInlineMarkdown(content)}</p>`;
     }
+
 
     paragraph = [];
   }
 
 
   for (const rawLine of lines) {
-    const line = rawLine.trim();
 
+    const line =
+      rawLine.trim();
 
-    // ----------------------------------------------------------------------
-    // Empty line
-    // ----------------------------------------------------------------------
 
     if (!line) {
+
       closeParagraph();
       closeList();
+
       continue;
     }
 
-
-    // ----------------------------------------------------------------------
-    // H2 heading
-    // ----------------------------------------------------------------------
 
     if (line.startsWith("## ")) {
+
       closeParagraph();
       closeList();
 
+
       html += `
-        <h2>${formatInlineMarkdown(
-          line.substring(3).trim()
-        )}</h2>
+        <h2>
+          ${formatInlineMarkdown(
+            line.substring(3).trim()
+          )}
+        </h2>
       `;
 
       continue;
     }
 
-
-    // ----------------------------------------------------------------------
-    // H3 heading
-    // ----------------------------------------------------------------------
 
     if (line.startsWith("### ")) {
+
       closeParagraph();
       closeList();
 
+
       html += `
-        <h3>${formatInlineMarkdown(
-          line.substring(4).trim()
-        )}</h3>
+        <h3>
+          ${formatInlineMarkdown(
+            line.substring(4).trim()
+          )}
+        </h3>
       `;
 
       continue;
     }
 
 
-    // ----------------------------------------------------------------------
-    // Bullet list
-    // ----------------------------------------------------------------------
+    const bulletMatch =
+      line.match(/^[-*]\s+(.+)$/);
 
-    const bulletMatch = line.match(/^[-*]\s+(.+)$/);
 
     if (bulletMatch) {
+
       closeParagraph();
 
+
       if (listType !== "ul") {
+
         closeList();
 
         html += "<ul>";
+
         listType = "ul";
       }
 
+
       html += `
-        <li>${formatInlineMarkdown(
-          bulletMatch[1]
-        )}</li>
+        <li>
+          ${formatInlineMarkdown(
+            bulletMatch[1]
+          )}
+        </li>
       `;
 
       continue;
     }
 
 
-    // ----------------------------------------------------------------------
-    // Numbered list
-    // ----------------------------------------------------------------------
+    const numberedMatch =
+      line.match(/^\d+\.\s+(.+)$/);
 
-    const numberedMatch = line.match(/^\d+\.\s+(.+)$/);
 
     if (numberedMatch) {
+
       closeParagraph();
 
+
       if (listType !== "ol") {
+
         closeList();
 
         html += "<ol>";
+
         listType = "ol";
       }
 
+
       html += `
-        <li>${formatInlineMarkdown(
-          numberedMatch[1]
-        )}</li>
+        <li>
+          ${formatInlineMarkdown(
+            numberedMatch[1]
+          )}
+        </li>
       `;
 
       continue;
     }
 
-
-    // ----------------------------------------------------------------------
-    // Normal paragraph text
-    // ----------------------------------------------------------------------
 
     closeList();
 
@@ -351,36 +1046,54 @@ function renderMarkdown(text) {
   }
 
 
-  // Close anything still open at the end.
   closeParagraph();
   closeList();
+
 
   return html;
 }
 
 
-/* ==========================================================================
+/* ========================================================================
    STARTUP
-   ========================================================================== */
+   ======================================================================== */
 
 async function boot() {
+
   try {
-    const me = await API.me();
+
+    const me =
+      await API.me();
+
 
     USER = me.user;
 
+
     if (USER) {
-      TOPICS = await API.topics();
+
+      TOPICS =
+        await API.topics();
+
       renderApp();
+
     } else {
+
       renderGate();
     }
 
   } catch (error) {
-    console.error("Boot failed:", error);
+
+    console.error(
+      "Boot failed:",
+      error
+    );
+
 
     root.innerHTML = `
-      <div class="loading" style="padding:44px;">
+      <div
+        class="loading"
+        style="padding:44px;"
+      >
         Unable to connect to the health assistant.
         Please refresh the page and try again.
       </div>
@@ -389,46 +1102,65 @@ async function boot() {
 }
 
 
-/* ==========================================================================
-   AUTH GATE — shown before login/signup
-========================================================================== */
+/* ========================================================================
+   AUTH GATE
+   ======================================================================== */
 
 let gateMode = "login";
 
 
 function renderGate() {
+
   root.innerHTML = `
+
     <div class="gate-wrap">
 
       <div class="gate-visual">
 
-        <img src="images/hero.jpg" alt="">
+        <img
+          src="images/hero.jpg"
+          alt=""
+        >
 
         <div class="gate-scrim"></div>
 
+
         <div class="gate-visual-brand">
-          <div class="mark">+</div>
+
+          <div class="mark">
+            +
+          </div>
+
           <div class="name">
             Your Simple<br>
             Health Assistant
           </div>
+
         </div>
 
+
         <div class="gate-tagline">
-          <h2>Health awareness, made simple.</h2>
+
+          <h2>
+            Health awareness, made simple.
+          </h2>
 
           <p>
-            Practical, everyday guidance on hygiene, nutrition, exercise,
-            and more — right when you need it.
+            Practical, everyday guidance on hygiene, nutrition,
+            exercise, and more — right when you need it.
           </p>
+
         </div>
 
       </div>
 
+
       <div class="gate-panel">
 
         <div class="gate-card">
+
           <div id="gateBody"></div>
+
         </div>
 
       </div>
@@ -436,30 +1168,42 @@ function renderGate() {
     </div>
   `;
 
+
   renderGateBody();
 }
 
 
 function renderGateBody() {
-  const body = document.getElementById("gateBody");
+
+  const body =
+    document.getElementById("gateBody");
+
 
   if (gateMode === "forgot") {
 
     body.innerHTML = `
-      <button class="gate-back" id="gateBackBtn">
+
+      <button
+        class="gate-back"
+        id="gateBackBtn"
+      >
         ← Back to log in
       </button>
+
 
       <h1 style="font-size:20px;">
         Forgot your password?
       </h1>
 
+
       <p
         class="lede"
         style="font-size:13.5px; margin-top:8px;"
       >
-        Enter the email you signed up with and we'll send a reset link to it.
+        Enter the email you signed up with and we'll send
+        a reset link to it.
       </p>
+
 
       <div
         class="auth-card"
@@ -472,12 +1216,14 @@ function renderGateBody() {
             Email
           </label>
 
+
           <input
             id="forgotEmail"
             type="email"
             autocomplete="email"
             required
           />
+
 
           <button
             type="submit"
@@ -486,10 +1232,12 @@ function renderGateBody() {
             Send reset link
           </button>
 
+
           <div
             class="error-msg"
             id="forgotError"
           ></div>
+
 
           <div
             class="success-msg"
@@ -505,59 +1253,76 @@ function renderGateBody() {
     document
       .getElementById("gateBackBtn")
       .addEventListener("click", () => {
+
         gateMode = "login";
+
         renderGateBody();
       });
 
 
     document
       .getElementById("forgotForm")
-      .addEventListener("submit", async (e) => {
+      .addEventListener(
+        "submit",
+        async e => {
 
-        e.preventDefault();
+          e.preventDefault();
 
-        const errorBox =
-          document.getElementById("forgotError");
 
-        const successBox =
-          document.getElementById("forgotSuccess");
+          const errorBox =
+            document.getElementById(
+              "forgotError"
+            );
 
-        errorBox.textContent = "";
-        successBox.textContent = "";
 
-        const email =
-          document
-            .getElementById("forgotEmail")
-            .value
-            .trim();
+          const successBox =
+            document.getElementById(
+              "forgotSuccess"
+            );
 
-        const result =
-          await API.forgotPassword(email);
 
-        if (!result.ok) {
-          errorBox.textContent =
-            result.data.error ||
-            "Something went wrong.";
+          errorBox.textContent = "";
+          successBox.textContent = "";
 
-          return;
+
+          const email =
+            document
+              .getElementById("forgotEmail")
+              .value
+              .trim();
+
+
+          const result =
+            await API.forgotPassword(email);
+
+
+          if (!result.ok) {
+
+            errorBox.textContent =
+              result.data.error ||
+              "Something went wrong.";
+
+            return;
+          }
+
+
+          successBox.textContent =
+            result.data.message ||
+            "If that email is registered, a reset link has been sent.";
         }
+      );
 
-        successBox.textContent =
-          result.data.message ||
-          "If that email is registered, a reset link has been sent.";
-      });
 
     return;
   }
 
 
-  // ------------------------------------------------------------------------
-  // Login or signup
-  // ------------------------------------------------------------------------
+  const isLogin =
+    gateMode === "login";
 
-  const isLogin = gateMode === "login";
 
   body.innerHTML = `
+
     <div class="gate-tabs">
 
       <button
@@ -566,6 +1331,7 @@ function renderGateBody() {
       >
         Log in
       </button>
+
 
       <button
         class="gate-tab ${!isLogin ? "active" : ""}"
@@ -600,6 +1366,7 @@ function renderGateBody() {
           Username
         </label>
 
+
         <input
           id="gateUsername"
           type="text"
@@ -629,6 +1396,7 @@ function renderGateBody() {
         <label for="gatePassword">
           Password
         </label>
+
 
         <input
           id="gatePassword"
@@ -682,7 +1450,9 @@ function renderGateBody() {
   document
     .getElementById("tabLogin")
     .addEventListener("click", () => {
+
       gateMode = "login";
+
       renderGateBody();
     });
 
@@ -690,16 +1460,21 @@ function renderGateBody() {
   document
     .getElementById("tabSignup")
     .addEventListener("click", () => {
+
       gateMode = "signup";
+
       renderGateBody();
     });
 
 
   if (isLogin) {
+
     document
       .getElementById("forgotLinkBtn")
       .addEventListener("click", () => {
+
         gateMode = "forgot";
+
         renderGateBody();
       });
   }
@@ -707,81 +1482,96 @@ function renderGateBody() {
 
   document
     .getElementById("gateForm")
-    .addEventListener("submit", async (e) => {
+    .addEventListener(
+      "submit",
+      async e => {
 
-      e.preventDefault();
-
-      const errorBox =
-        document.getElementById("gateError");
-
-      errorBox.textContent = "";
-
-      const username =
-        document
-          .getElementById("gateUsername")
-          .value
-          .trim();
-
-      const password =
-        document
-          .getElementById("gatePassword")
-          .value;
+        e.preventDefault();
 
 
-      let result;
-
-
-      if (isLogin) {
-
-        result =
-          await API.login(
-            username,
-            password
+        const errorBox =
+          document.getElementById(
+            "gateError"
           );
 
-      } else {
 
-        const email =
+        errorBox.textContent = "";
+
+
+        const username =
           document
-            .getElementById("gateEmail")
+            .getElementById("gateUsername")
             .value
             .trim();
 
-        result =
-          await API.signup(
-            username,
-            email,
-            password
-          );
+
+        const password =
+          document
+            .getElementById("gatePassword")
+            .value;
+
+
+        let result;
+
+
+        if (isLogin) {
+
+          result =
+            await API.login(
+              username,
+              password
+            );
+
+        } else {
+
+          const email =
+            document
+              .getElementById("gateEmail")
+              .value
+              .trim();
+
+
+          result =
+            await API.signup(
+              username,
+              email,
+              password
+            );
+        }
+
+
+        if (!result.ok) {
+
+          errorBox.textContent =
+            result.data.error ||
+            "Something went wrong.";
+
+          return;
+        }
+
+
+        USER =
+          result.data.user;
+
+
+        TOPICS =
+          await API.topics();
+
+
+        renderApp();
       }
-
-
-      if (!result.ok) {
-
-        errorBox.textContent =
-          result.data.error ||
-          "Something went wrong.";
-
-        return;
-      }
-
-
-      USER = result.data.user;
-
-      TOPICS = await API.topics();
-
-      renderApp();
-    });
+    );
 }
 
 
-/* ==========================================================================
+/* ========================================================================
    MAIN APP
-========================================================================== */
+   ======================================================================== */
 
 function renderApp() {
 
   root.innerHTML = `
+
     <div class="app">
 
       <aside class="sidebar">
@@ -816,9 +1606,11 @@ function renderApp() {
 
 
       <main id="main">
+
         <div class="loading">
           Loading…
         </div>
+
       </main>
 
     </div>
@@ -832,27 +1624,31 @@ function renderApp() {
 }
 
 
-/* ==========================================================================
+/* ========================================================================
    NAVIGATION
-========================================================================== */
+   ======================================================================== */
 
 function renderNav() {
 
   const nav =
     document.getElementById("nav");
 
+
   const items = [
+
     {
       id: "home",
       icon: "🏠",
       name: "Home"
     },
 
+
     ...TOPICS.map(t => ({
       id: t.id,
       icon: t.icon,
       name: t.name
     })),
+
 
     {
       id: "ask",
@@ -865,6 +1661,7 @@ function renderNav() {
   nav.innerHTML =
     items
       .map(it => `
+
         <button
           class="nav-btn ${
             it.id === current
@@ -873,9 +1670,13 @@ function renderNav() {
           }"
           data-goto="${it.id}"
         >
+
           <span class="dot"></span>
-          ${it.name}
+
+          ${escapeHtml(it.name)}
+
         </button>
+
       `)
       .join("");
 
@@ -893,24 +1694,29 @@ function renderNav() {
 }
 
 
-/* ==========================================================================
+/* ========================================================================
    ACCOUNT BOX
-========================================================================== */
+   ======================================================================== */
 
 function renderAccountBox() {
 
   const box =
-    document.getElementById("accountBox");
+    document.getElementById(
+      "accountBox"
+    );
 
 
   box.innerHTML = `
+
     <div class="who">
       👤 ${escapeHtml(USER.username)}
     </div>
 
+
     <div class="foot-note">
       Your questions are saved to your account.
     </div>
+
 
     <button
       class="link"
@@ -918,6 +1724,7 @@ function renderAccountBox() {
     >
       Account
     </button>
+
 
     <button
       class="link"
@@ -942,9 +1749,12 @@ function renderAccountBox() {
       "click",
       async () => {
 
+        stopVoice();
+
         await API.logout();
 
         USER = null;
+
         gateMode = "login";
 
         renderGate();
@@ -953,13 +1763,14 @@ function renderAccountBox() {
 }
 
 
-/* ==========================================================================
+/* ========================================================================
    HOME PAGE
-========================================================================== */
+   ======================================================================== */
 
 function homeHTML() {
 
   return `
+
     <section class="page active">
 
       <div class="hero">
@@ -968,10 +1779,12 @@ function homeHTML() {
           Simple Health Assistant
         </div>
 
+
         <h1>
           Basic health information,
           organized simply.
         </h1>
+
 
         <p class="lede">
           A small digital tool covering everyday health topics and questions —
@@ -987,9 +1800,11 @@ function homeHTML() {
             <b>5</b> health topics
           </div>
 
+
           <div class="pill">
             <b>30+</b> specific questions answered
           </div>
+
 
           <div class="pill">
             <b>1</b> built-in assistant
@@ -1008,6 +1823,7 @@ function homeHTML() {
       <div class="topic-grid">
 
         ${TOPICS.map(t => `
+
           <button
             class="topic-card"
             data-goto="${t.id}"
@@ -1017,15 +1833,18 @@ function homeHTML() {
               ${t.icon}
             </div>
 
+
             <h3>
               ${escapeHtml(t.name)}
             </h3>
+
 
             <p>
               ${escapeHtml(t.short)}
             </p>
 
           </button>
+
         `).join("")}
 
       </div>
@@ -1035,9 +1854,9 @@ function homeHTML() {
 }
 
 
-/* ==========================================================================
+/* ========================================================================
    TOPIC PAGE
-========================================================================== */
+   ======================================================================== */
 
 async function topicHTML(id) {
 
@@ -1046,6 +1865,7 @@ async function topicHTML(id) {
 
 
   return `
+
     <section class="page active">
 
       <div class="topic-header">
@@ -1054,11 +1874,13 @@ async function topicHTML(id) {
           ${t.icon}
         </div>
 
+
         <div>
 
           <h1>
             ${escapeHtml(t.name)}
           </h1>
+
 
           <p>
             ${escapeHtml(t.intro)}
@@ -1077,9 +1899,11 @@ async function topicHTML(id) {
       <ul class="tip-list">
 
         ${t.tips.map(tip => `
+
           <li>
             ${escapeHtml(tip)}
           </li>
+
         `).join("")}
 
       </ul>
@@ -1090,6 +1914,7 @@ async function topicHTML(id) {
         <div class="label">
           DID YOU KNOW
         </div>
+
 
         <p>
           ${escapeHtml(t.fact)}
@@ -1102,9 +1927,9 @@ async function topicHTML(id) {
 }
 
 
-/* ==========================================================================
+/* ========================================================================
    ASK PAGE
-========================================================================== */
+   ======================================================================== */
 
 async function askHTML() {
 
@@ -1117,14 +1942,18 @@ async function askHTML() {
   if (history.length) {
 
     historyBlock = `
+
       <div class="section-title">
         YOUR RECENT QUESTIONS
       </div>
 
+
       <ul class="history-list">
 
         ${history.map(h => `
+
           <li>
+
             <b>
               ${
                 h.topic
@@ -1138,8 +1967,11 @@ async function askHTML() {
             </b>
 
             —
+
             ${escapeHtml(h.question)}
+
           </li>
+
         `).join("")}
 
       </ul>
@@ -1148,15 +1980,18 @@ async function askHTML() {
 
 
   return `
+
     <section class="page active">
 
       <div class="eyebrow-row">
         Ask the assistant
       </div>
 
+
       <h1>
         What would you like to know?
       </h1>
+
 
       <p
         class="lede"
@@ -1178,11 +2013,54 @@ async function askHTML() {
             placeholder="e.g. what should I do for a headache?"
           />
 
+
           <button id="askBtn">
             Ask
           </button>
 
         </div>
+
+
+        <!-- ============================================================
+             VOICE CONTROLS
+             ============================================================ -->
+
+        <div class="voice-controls">
+
+          <button
+            type="button"
+            id="pushVoiceBtn"
+            class="voice-btn"
+          >
+            🎙️ Push to Talk
+          </button>
+
+
+          <button
+            type="button"
+            id="conversationVoiceBtn"
+            class="voice-btn"
+          >
+            🗣️ Conversation
+          </button>
+
+
+          <button
+            type="button"
+            id="stopVoiceBtn"
+            class="voice-btn voice-stop"
+            style="display:none;"
+          >
+            ⏹️ Stop
+          </button>
+
+        </div>
+
+
+        <div
+          id="voiceStatus"
+          class="voice-status"
+        ></div>
 
 
         <div class="suggest-row">
@@ -1194,12 +2072,14 @@ async function askHTML() {
             Headache?
           </button>
 
+
           <button
             class="suggest-chip"
             data-q="How do I treat a burn?"
           >
             Treating a burn?
           </button>
+
 
           <button
             class="suggest-chip"
@@ -1208,12 +2088,14 @@ async function askHTML() {
             Signs of malaria?
           </button>
 
+
           <button
             class="suggest-chip"
             data-q="I can't sleep, what can I do?"
           >
             Trouble sleeping?
           </button>
+
 
           <button
             class="suggest-chip"
@@ -1247,22 +2129,25 @@ async function askHTML() {
 }
 
 
-/* ==========================================================================
+/* ========================================================================
    ACCOUNT PAGE
-========================================================================== */
+   ======================================================================== */
 
 function accountHTML() {
 
   return `
+
     <section class="page active">
 
       <div class="eyebrow-row">
         Account
       </div>
 
+
       <h1>
         Hi, ${escapeHtml(USER.username)}.
       </h1>
+
 
       <p
         class="lede"
@@ -1287,6 +2172,7 @@ function accountHTML() {
             Current password
           </label>
 
+
           <input
             id="currentPw"
             type="password"
@@ -1299,6 +2185,7 @@ function accountHTML() {
             New password
           </label>
 
+
           <input
             id="newPw"
             type="password"
@@ -1310,6 +2197,7 @@ function accountHTML() {
           <label for="confirmPw">
             Confirm new password
           </label>
+
 
           <input
             id="confirmPw"
@@ -1332,6 +2220,7 @@ function accountHTML() {
             id="pwError"
           ></div>
 
+
           <div
             class="success-msg"
             id="pwSuccess"
@@ -1346,43 +2235,63 @@ function accountHTML() {
 }
 
 
-/* ==========================================================================
+/* ========================================================================
    ACCOUNT PAGE LOGIC
-========================================================================== */
+   ======================================================================== */
 
 function wireAccountPage() {
 
   const pwForm =
-    document.getElementById("pwForm");
+    document.getElementById(
+      "pwForm"
+    );
+
 
   const pwError =
-    document.getElementById("pwError");
+    document.getElementById(
+      "pwError"
+    );
+
 
   const pwSuccess =
-    document.getElementById("pwSuccess");
+    document.getElementById(
+      "pwSuccess"
+    );
 
 
   pwForm.addEventListener(
     "submit",
-    async (e) => {
+    async e => {
 
       e.preventDefault();
+
 
       pwError.textContent = "";
       pwSuccess.textContent = "";
 
 
       const current_password =
-        document.getElementById("currentPw").value;
+        document.getElementById(
+          "currentPw"
+        ).value;
+
 
       const new_password =
-        document.getElementById("newPw").value;
+        document.getElementById(
+          "newPw"
+        ).value;
+
 
       const confirm_password =
-        document.getElementById("confirmPw").value;
+        document.getElementById(
+          "confirmPw"
+        ).value;
 
 
-      if (new_password !== confirm_password) {
+      if (
+        new_password !==
+        confirm_password
+      ) {
 
         pwError.textContent =
           "New passwords don't match.";
@@ -1411,17 +2320,30 @@ function wireAccountPage() {
       pwSuccess.textContent =
         "Password updated.";
 
+
       pwForm.reset();
     }
   );
 }
 
 
-/* ==========================================================================
+/* ========================================================================
    PAGE ROUTING
-========================================================================== */
+   ======================================================================== */
 
 async function goTo(id) {
+
+  /*
+     Stop conversation when leaving Ask.
+  */
+
+  if (
+    current === "ask" &&
+    id !== "ask"
+  ) {
+    stopVoice();
+  }
+
 
   current = id;
 
@@ -1429,7 +2351,9 @@ async function goTo(id) {
 
 
   const main =
-    document.getElementById("main");
+    document.getElementById(
+      "main"
+    );
 
 
   if (id === "home") {
@@ -1442,6 +2366,7 @@ async function goTo(id) {
     main.innerHTML =
       '<div class="loading">Loading…</div>';
 
+
     main.innerHTML =
       await askHTML();
 
@@ -1450,6 +2375,7 @@ async function goTo(id) {
     main.innerHTML =
       accountHTML();
 
+
     wireAccountPage();
 
   } else {
@@ -1457,14 +2383,15 @@ async function goTo(id) {
     main.innerHTML =
       '<div class="loading">Loading…</div>';
 
+
     main.innerHTML =
       await topicHTML(id);
   }
 
 
-  // ------------------------------------------------------------------------
-  // Buttons that navigate to another page
-  // ------------------------------------------------------------------------
+  /*
+     Buttons that navigate.
+  */
 
   main
     .querySelectorAll("[data-goto]")
@@ -1472,28 +2399,53 @@ async function goTo(id) {
 
       el.addEventListener(
         "click",
-        () => goTo(el.dataset.goto)
+        () => goTo(
+          el.dataset.goto
+        )
       );
 
     });
 
 
-  // ------------------------------------------------------------------------
-  // ASK PAGE
-  // ------------------------------------------------------------------------
+  /*
+     ASK PAGE.
+  */
 
   if (id === "ask") {
 
     const askBtn =
-      document.getElementById("askBtn");
+      document.getElementById(
+        "askBtn"
+      );
+
 
     const askInput =
-      document.getElementById("askInput");
+      document.getElementById(
+        "askInput"
+      );
+
+
+    const pushVoiceBtn =
+      document.getElementById(
+        "pushVoiceBtn"
+      );
+
+
+    const conversationVoiceBtn =
+      document.getElementById(
+        "conversationVoiceBtn"
+      );
+
+
+    const stopVoiceBtn =
+      document.getElementById(
+        "stopVoiceBtn"
+      );
 
 
     askBtn.addEventListener(
       "click",
-      handleAsk
+      () => handleAsk()
     );
 
 
@@ -1509,6 +2461,69 @@ async function goTo(id) {
     );
 
 
+    /*
+       Push-to-talk.
+    */
+
+    pushVoiceBtn.addEventListener(
+      "click",
+      () => {
+
+        if (
+          voiceMode === "push" &&
+          voiceListening
+        ) {
+
+          stopVoice();
+
+        } else {
+
+          clearVoiceMessage();
+
+          startPushToTalk();
+        }
+      }
+    );
+
+
+    /*
+       Conversation mode.
+    */
+
+    conversationVoiceBtn.addEventListener(
+      "click",
+      () => {
+
+        if (
+          voiceMode === "conversation"
+        ) {
+
+          stopVoice();
+
+        } else {
+
+          clearVoiceMessage();
+
+          startConversation();
+        }
+      }
+    );
+
+
+    /*
+       Stop voice.
+    */
+
+    stopVoiceBtn.addEventListener(
+      "click",
+      () => stopVoice()
+    );
+
+
+    /*
+       Suggested questions.
+    */
+
     document
       .querySelectorAll(".suggest-chip")
       .forEach(chip => {
@@ -1518,16 +2533,23 @@ async function goTo(id) {
           () => {
 
             const input =
-              document.getElementById("askInput");
+              document.getElementById(
+                "askInput"
+              );
+
 
             input.value =
               chip.dataset.q;
+
 
             handleAsk();
           }
         );
 
       });
+
+
+    updateVoiceUI();
   }
 
 
@@ -1535,17 +2557,22 @@ async function goTo(id) {
 }
 
 
-/* ==========================================================================
+/* ========================================================================
    ASK / AI
-========================================================================== */
+   ======================================================================== */
 
-async function handleAsk() {
+async function handleAsk(options = {}) {
 
   const input =
-    document.getElementById("askInput");
+    document.getElementById(
+      "askInput"
+    );
+
 
   const box =
-    document.getElementById("answerBox");
+    document.getElementById(
+      "answerBox"
+    );
 
 
   if (!input || !box) {
@@ -1562,15 +2589,34 @@ async function handleAsk() {
   }
 
 
-  // ------------------------------------------------------------------------
-  // Thinking state
-  // ------------------------------------------------------------------------
+  /*
+     Determine whether this request came from voice.
+  */
+
+  const fromVoice =
+    options.voice === true;
+
+
+  const conversationRequest =
+    options.conversation === true;
+
+
+  /*
+     Thinking state.
+  */
 
   box.innerHTML = `
+
     <div class="loading">
-      Thinking…
+      ${
+        fromVoice
+          ? "Thinking…"
+          : "Thinking…"
+      }
     </div>
+
   `;
+
 
   box.classList.add("show");
 
@@ -1581,16 +2627,18 @@ async function handleAsk() {
       await API.ask(val);
 
 
-    // ----------------------------------------------------------------------
-    // No match
-    // ----------------------------------------------------------------------
+    /*
+       No match.
+    */
 
     if (!result.matched) {
 
       box.innerHTML = `
+
         <div class="from">
           NO MATCH FOUND
         </div>
+
 
         <div class="answer-text">
 
@@ -1598,6 +2646,7 @@ async function handleAsk() {
             Try rephrasing your question, or browse a topic directly
             using the menu on the left.
           </p>
+
 
           <p>
             Available topics include
@@ -1612,25 +2661,60 @@ async function handleAsk() {
         </div>
       `;
 
+
+      /*
+         Speak the fallback in voice mode.
+      */
+
+      if (fromVoice) {
+
+        speakText(
+          "I couldn't find a matching health topic. Try rephrasing your question or browse one of the health topics.",
+          () => {
+
+            if (
+              conversationRequest &&
+              conversationShouldContinue
+            ) {
+              startConversationListening();
+            }
+
+          }
+        );
+      }
+
+
       return;
     }
 
 
-    // ----------------------------------------------------------------------
-    // LOCAL FAQ
-    // ----------------------------------------------------------------------
+    /*
+       LOCAL FAQ.
+    */
 
     if (result.kind === "faq") {
 
       box.innerHTML = `
+
         <div class="from">
+
           ${result.topic.icon}
-          ${escapeHtml(result.topic.name)}
+
+          ${escapeHtml(
+            result.topic.name
+          )}
+
         </div>
 
+
         <div class="answer-text">
-          ${renderMarkdown(result.answer)}
+
+          ${renderMarkdown(
+            result.answer
+          )}
+
         </div>
+
 
         <div style="margin-top:20px;">
 
@@ -1650,47 +2734,113 @@ async function handleAsk() {
 
 
       const moreButton =
-        box.querySelector("[data-goto]");
+        box.querySelector(
+          "[data-goto]"
+        );
 
 
       if (moreButton) {
 
         moreButton.addEventListener(
           "click",
-          () => goTo(result.topic.id)
-        );
+          () => {
 
+            stopVoice();
+
+            goTo(
+              result.topic.id
+            );
+
+          }
+        );
       }
 
 
-    // ----------------------------------------------------------------------
-    // HUGGING FACE AI
-    // ----------------------------------------------------------------------
+      /*
+         Voice answer.
+      */
+
+      if (fromVoice) {
+
+        speakText(
+          result.answer,
+          () => {
+
+            if (
+              conversationRequest &&
+              conversationShouldContinue
+            ) {
+              startConversationListening();
+            }
+
+          }
+        );
+      }
+
+
+    /*
+       HUGGING FACE AI.
+    */
 
     } else if (result.kind === "ai") {
 
       box.innerHTML = `
+
         <div class="from">
           💬 ASSISTANT
         </div>
 
+
         <div class="answer-text">
-          ${renderMarkdown(result.answer)}
+
+          ${renderMarkdown(
+            result.answer
+          )}
+
         </div>
       `;
 
 
-    // ----------------------------------------------------------------------
-    // LOCAL TOPIC FALLBACK
-    // ----------------------------------------------------------------------
+      /*
+         Voice answer.
+      */
+
+      if (fromVoice) {
+
+        speakText(
+          result.answer,
+          () => {
+
+            if (
+              conversationRequest &&
+              conversationShouldContinue
+            ) {
+              startConversationListening();
+            }
+
+          }
+        );
+      }
+
+
+    /*
+       LOCAL TOPIC FALLBACK.
+    */
 
     } else {
 
       box.innerHTML = `
+
         <div class="from">
+
           ${result.topic.icon}
-          ${escapeHtml(result.topic.name)}
+
+          ${escapeHtml(
+            result.topic.name
+          )}
+
         </div>
+
 
         <div class="answer-text">
 
@@ -1698,12 +2848,17 @@ async function handleAsk() {
             Helpful tips
           </h2>
 
+
           <ul>
+
             ${result.tips.map(tip => `
+
               <li>
                 ${escapeHtml(tip)}
               </li>
+
             `).join("")}
+
           </ul>
 
         </div>
@@ -1727,16 +2882,53 @@ async function handleAsk() {
 
 
       const moreButton =
-        box.querySelector("[data-goto]");
+        box.querySelector(
+          "[data-goto]"
+        );
 
 
       if (moreButton) {
 
         moreButton.addEventListener(
           "click",
-          () => goTo(result.topic.id)
-        );
+          () => {
 
+            stopVoice();
+
+            goTo(
+              result.topic.id
+            );
+
+          }
+        );
+      }
+
+
+      /*
+         Voice answer.
+      */
+
+      if (fromVoice) {
+
+        const spokenTips =
+          Array.isArray(result.tips)
+            ? result.tips.join(". ")
+            : "";
+
+
+        speakText(
+          `Here are some helpful tips. ${spokenTips}`,
+          () => {
+
+            if (
+              conversationRequest &&
+              conversationShouldContinue
+            ) {
+              startConversationListening();
+            }
+
+          }
+        );
       }
     }
 
@@ -1750,9 +2942,11 @@ async function handleAsk() {
 
 
     box.innerHTML = `
+
       <div class="from">
         CONNECTION ERROR
       </div>
+
 
       <div class="answer-text">
 
@@ -1760,18 +2954,38 @@ async function handleAsk() {
           We couldn't reach the health assistant right now.
         </p>
 
+
         <p>
           Please check the connection and try again.
         </p>
 
       </div>
     `;
+
+
+    if (fromVoice) {
+
+      speakText(
+        "We couldn't reach the health assistant right now. Please check the connection and try again.",
+        () => {
+
+          if (
+            conversationRequest &&
+            conversationShouldContinue
+          ) {
+            startConversationListening();
+          }
+
+        }
+      );
+    }
   }
 }
 
 
-/* ==========================================================================
+/* ========================================================================
    START APPLICATION
-========================================================================== */
+   ======================================================================== */
 
 boot();
+```
