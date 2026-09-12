@@ -4,30 +4,61 @@
  A Creative Digital Tool for Improving Health Awareness and Better Development
 ================================================================================
 
-This file is the WHOLE backend — a pure JSON API. It contains:
+This file is the WHOLE backend — a pure JSON API.
+
+Features:
   - Health topics + FAQ knowledge base
-  - SQLite database layer
+  - SQLite database
   - User accounts and authentication
-  - Ask-history
-  - Password-reset emails
-  - Hugging Face AI for open-ended health questions
+  - Ask history
+  - Password reset emails
+  - Hugging Face AI
+  - Automatic language matching
+  - English, Luganda, Filipino, French, Spanish, German
   - Flask API routes under /api/...
 
-The FRONTEND is a completely separate static site deployed to Vercel.
+LANGUAGE BEHAVIOR
+--------------------------------------------------------------------------------
+
+The user does NOT need to select a language.
+
+English is the default.
+
+If the user writes in:
+    - Luganda
+    - Filipino
+    - French
+    - Spanish
+    - German
+
+the AI is instructed to answer in that same language.
+
+Example:
+
+    User: French
+    Assistant: French
+
+    User: Luganda
+    Assistant: Luganda
+
+    User: Spanish
+    Assistant: Spanish
+
+If the language cannot be confidently identified, English is used.
+
+The browser voice system is handled separately by the frontend.
 
 --------------------------------------------------------------------------------
 RUN LOCALLY
 --------------------------------------------------------------------------------
+
     pip install -r requirements.txt
     python app.py
 
-The API runs at:
-
-    http://127.0.0.1:5000
-
 --------------------------------------------------------------------------------
-DEPLOY BACKEND TO RENDER
+RENDER
 --------------------------------------------------------------------------------
+
 Start command:
 
     gunicorn app:app
@@ -38,7 +69,7 @@ Required environment variables:
     FRONTEND_ORIGIN
     APP_BASE_URL
 
-Hugging Face AI:
+Hugging Face:
 
     HF_TOKEN
     HF_MODEL
@@ -47,44 +78,10 @@ Recommended model:
 
     openai/gpt-oss-120b
 
-HF_TOKEN must be created on Hugging Face with permission to make calls to
-Inference Providers.
-
---------------------------------------------------------------------------------
-HUGGING FACE
---------------------------------------------------------------------------------
-The application first checks the local FAQ.
-
-If the question does not match a prepared FAQ, the question is sent to
-Hugging Face.
-
-This allows the assistant to answer a much wider range of health questions
-instead of being limited to the built-in FAQ.
-
-The AI is instructed to produce naturally formatted answers using:
-
-    headings
-    bold text
-    bullet points
-    numbered lists
-    short paragraphs
-
-The frontend safely renders this formatting.
-
-If Hugging Face is unavailable, the application falls back to the local
-topic system instead of crashing.
-
---------------------------------------------------------------------------------
-FORGOT PASSWORD — GMAIL
---------------------------------------------------------------------------------
-Required for actual password-reset emails:
+Password reset:
 
     SMTP_EMAIL
     SMTP_APP_PASSWORD
-
-The reset link is generated using:
-
-    APP_BASE_URL
 
 ================================================================================
 """
@@ -110,6 +107,7 @@ from huggingface_hub import InferenceClient
 # ==============================================================================
 
 BASE_DIR = Path(__file__).resolve().parent
+
 DB_PATH = BASE_DIR / "health_assistant.db"
 
 FRONTEND_ORIGIN = os.environ.get(
@@ -136,9 +134,6 @@ app.secret_key = os.environ.get(
 
 app.permanent_session_lifetime = timedelta(days=30)
 
-
-# Cross-site cookies are required when the Vercel frontend talks to the
-# Render backend.
 _frontend_is_https = FRONTEND_ORIGIN.startswith("https://")
 
 app.config.update(
@@ -159,10 +154,19 @@ def handle_preflight():
 
 @app.after_request
 def add_cors_headers(response):
+
     response.headers["Access-Control-Allow-Origin"] = FRONTEND_ORIGIN
+
     response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+
+    response.headers["Access-Control-Allow-Methods"] = (
+        "GET, POST, OPTIONS"
+    )
+
+    response.headers["Access-Control-Allow-Headers"] = (
+        "Content-Type"
+    )
+
     return response
 
 
@@ -193,6 +197,7 @@ TOPICS = [
             "is handwashing with soap."
         ),
     },
+
     {
         "id": "nutrition",
         "icon": "🥗",
@@ -215,6 +220,7 @@ TOPICS = [
             "source, and a grain or other source of carbohydrates."
         ),
     },
+
     {
         "id": "exercise",
         "icon": "🏃",
@@ -236,6 +242,7 @@ TOPICS = [
             "Short periods of physical activity can add up throughout the day."
         ),
     },
+
     {
         "id": "illnesses",
         "icon": "🩺",
@@ -258,6 +265,7 @@ TOPICS = [
             "identify the exact cause."
         ),
     },
+
     {
         "id": "prevention",
         "icon": "🛡",
@@ -283,7 +291,12 @@ TOPICS = [
 ]
 
 
+# ==============================================================================
+# TOPIC KEYWORDS
+# ==============================================================================
+
 TOPIC_KEYWORDS = {
+
     "hygiene": [
         "hygiene",
         "wash",
@@ -298,6 +311,7 @@ TOPIC_KEYWORDS = {
         "germs",
         "nails",
     ],
+
     "nutrition": [
         "nutrition",
         "food",
@@ -312,6 +326,7 @@ TOPIC_KEYWORDS = {
         "meal",
         "meals",
     ],
+
     "exercise": [
         "exercise",
         "workout",
@@ -325,6 +340,7 @@ TOPIC_KEYWORDS = {
         "active",
         "activity",
     ],
+
     "illnesses": [
         "illness",
         "sick",
@@ -341,6 +357,7 @@ TOPIC_KEYWORDS = {
         "symptom",
         "symptoms",
     ],
+
     "prevention": [
         "prevent",
         "prevention",
@@ -356,8 +373,13 @@ TOPIC_KEYWORDS = {
 
 
 def _topic_by_id(topic_id):
+
     return next(
-        (topic for topic in TOPICS if topic["id"] == topic_id),
+        (
+            topic
+            for topic in TOPICS
+            if topic["id"] == topic_id
+        ),
         None
     )
 
@@ -367,10 +389,15 @@ def _topic_by_id(topic_id):
 # ==============================================================================
 
 FAQ = [
+
     {
         "id": "headache",
         "topic": "illnesses",
-        "keywords": ["headache", "head ache", "migraine"],
+        "keywords": [
+            "headache",
+            "head ache",
+            "migraine",
+        ],
         "answer": (
             "Most headaches are caused by things such as dehydration, stress, "
             "poor sleep, or eye strain. Rest, drink water, and give yourself "
@@ -379,10 +406,15 @@ FAQ = [
             "vision changes, or other serious symptoms."
         ),
     },
+
     {
         "id": "fever",
         "topic": "illnesses",
-        "keywords": ["fever", "high temperature", "temperature"],
+        "keywords": [
+            "fever",
+            "high temperature",
+            "temperature",
+        ],
         "answer": (
             "A fever is often a sign that the body is responding to an infection. "
             "Rest, drink fluids, and avoid overheating. Seek medical advice if "
@@ -390,10 +422,14 @@ FAQ = [
             "symptoms such as difficulty breathing, confusion, or a severe rash."
         ),
     },
+
     {
         "id": "cough",
         "topic": "illnesses",
-        "keywords": ["cough", "coughing"],
+        "keywords": [
+            "cough",
+            "coughing",
+        ],
         "answer": (
             "A cough is usually the body's way of clearing irritants or mucus "
             "from the airway. Warm fluids, rest, and honey for people over "
@@ -402,6 +438,7 @@ FAQ = [
             "difficulty."
         ),
     },
+
     {
         "id": "sore-throat",
         "topic": "illnesses",
@@ -417,6 +454,7 @@ FAQ = [
             "high fever or difficulty swallowing."
         ),
     },
+
     {
         "id": "stomach-ache",
         "topic": "illnesses",
@@ -434,6 +472,7 @@ FAQ = [
             "fever or repeated vomiting, or symptoms that do not improve."
         ),
     },
+
     {
         "id": "diarrhea",
         "topic": "prevention",
@@ -450,6 +489,7 @@ FAQ = [
             "severe dehydration, or symptoms that persist or become worse."
         ),
     },
+
     {
         "id": "food-poisoning",
         "topic": "prevention",
@@ -465,6 +505,7 @@ FAQ = [
             "signs of dehydration."
         ),
     },
+
     {
         "id": "dehydration",
         "topic": "nutrition",
@@ -480,6 +521,7 @@ FAQ = [
             "diarrhea. Severe dehydration requires urgent medical attention."
         ),
     },
+
     {
         "id": "cuts-wounds",
         "topic": "hygiene",
@@ -496,6 +538,7 @@ FAQ = [
             "bleeding that will not stop, or signs of infection."
         ),
     },
+
     {
         "id": "burns",
         "topic": "hygiene",
@@ -510,6 +553,7 @@ FAQ = [
             "ice, butter, or oil. Larger or serious burns require medical care."
         ),
     },
+
     {
         "id": "allergies",
         "topic": "prevention",
@@ -527,6 +571,7 @@ FAQ = [
             "medical help immediately."
         ),
     },
+
     {
         "id": "stress",
         "topic": "prevention",
@@ -545,6 +590,7 @@ FAQ = [
             "counselor, or health professional can be useful."
         ),
     },
+
     {
         "id": "sleep",
         "topic": "prevention",
@@ -562,6 +608,7 @@ FAQ = [
             "consider talking with a health professional."
         ),
     },
+
     {
         "id": "skin-rash",
         "topic": "illnesses",
@@ -578,6 +625,7 @@ FAQ = [
             "quickly, becomes very painful, blisters, or occurs with fever."
         ),
     },
+
     {
         "id": "eye-strain",
         "topic": "prevention",
@@ -594,6 +642,7 @@ FAQ = [
             "should be checked by an eye-care professional."
         ),
     },
+
     {
         "id": "back-pain",
         "topic": "exercise",
@@ -609,6 +658,7 @@ FAQ = [
             "or accompanied by weakness, numbness, or other concerning symptoms."
         ),
     },
+
     {
         "id": "blood-pressure",
         "topic": "prevention",
@@ -624,6 +674,7 @@ FAQ = [
             "A health professional can help interpret an actual blood-pressure reading."
         ),
     },
+
     {
         "id": "diabetes",
         "topic": "nutrition",
@@ -639,6 +690,7 @@ FAQ = [
             "is needed to determine whether someone has diabetes."
         ),
     },
+
     {
         "id": "common-cold",
         "topic": "illnesses",
@@ -655,6 +707,7 @@ FAQ = [
             "initially improving."
         ),
     },
+
     {
         "id": "insect-bites",
         "topic": "prevention",
@@ -671,6 +724,7 @@ FAQ = [
             "malaria-risk area."
         ),
     },
+
     {
         "id": "nosebleed",
         "topic": "illnesses",
@@ -686,6 +740,7 @@ FAQ = [
             "does not stop or happens repeatedly."
         ),
     },
+
     {
         "id": "sunburn",
         "topic": "hygiene",
@@ -700,6 +755,7 @@ FAQ = [
             "blisters. Severe burns or symptoms of heat illness require medical care."
         ),
     },
+
     {
         "id": "ear-pain",
         "topic": "illnesses",
@@ -716,6 +772,7 @@ FAQ = [
             "or hearing changes."
         ),
     },
+
     {
         "id": "menstrual-cramps",
         "topic": "exercise",
@@ -731,6 +788,7 @@ FAQ = [
             "professional."
         ),
     },
+
     {
         "id": "child-fever",
         "topic": "illnesses",
@@ -747,6 +805,7 @@ FAQ = [
             "a concerning rash, or severe symptoms should receive urgent care."
         ),
     },
+
     {
         "id": "vaccination",
         "topic": "prevention",
@@ -763,6 +822,7 @@ FAQ = [
             "the appropriate schedule."
         ),
     },
+
     {
         "id": "muscle-cramp",
         "topic": "exercise",
@@ -777,6 +837,7 @@ FAQ = [
             "unexplained cramps are worth discussing with a health professional."
         ),
     },
+
     {
         "id": "weight",
         "topic": "nutrition",
@@ -793,6 +854,7 @@ FAQ = [
             "are safer approaches than extreme diets or restrictive eating."
         ),
     },
+
     {
         "id": "smoking",
         "topic": "prevention",
@@ -809,6 +871,7 @@ FAQ = [
             "from a health professional or trusted adult can help."
         ),
     },
+
     {
         "id": "choking",
         "topic": "hygiene",
@@ -831,7 +894,9 @@ FAQ = [
 # ==============================================================================
 
 def _score(text, keywords):
+
     text = text.lower()
+
     return sum(
         1
         for keyword in keywords
@@ -840,13 +905,16 @@ def _score(text, keywords):
 
 
 def _match_faq(query):
-    """Find the FAQ entry whose keywords best match the query."""
 
     best_entry = None
     best_score = 0
 
     for entry in FAQ:
-        score = _score(query, entry["keywords"])
+
+        score = _score(
+            query,
+            entry["keywords"]
+        )
 
         if score > best_score:
             best_entry = entry
@@ -856,19 +924,26 @@ def _match_faq(query):
 
 
 def _match_topic(query):
-    """Find the broad topic that best matches the query."""
 
     best_id = None
     best_score = 0
 
     for topic_id, words in TOPIC_KEYWORDS.items():
-        score = _score(query, words)
+
+        score = _score(
+            query,
+            words
+        )
 
         if score > best_score:
             best_id = topic_id
             best_score = score
 
-    return _topic_by_id(best_id) if best_id else None
+    return (
+        _topic_by_id(best_id)
+        if best_id
+        else None
+    )
 
 
 # ==============================================================================
@@ -883,6 +958,10 @@ HF_MODEL = os.environ.get(
 )
 
 
+# ==============================================================================
+# AI SYSTEM PROMPT
+# ==============================================================================
+
 AI_SYSTEM_PROMPT = """
 You are the AI assistant inside "Your Simple Health Assistant".
 
@@ -891,6 +970,70 @@ Your job is to provide clear, useful, easy-to-understand health information.
 The user may ask about symptoms, illnesses, nutrition, exercise, sleep,
 hygiene, prevention, first aid, mental wellbeing, medical terminology,
 health science, or general health questions.
+
+==================================================
+AUTOMATIC LANGUAGE BEHAVIOR
+==================================================
+
+IMPORTANT:
+
+The user does NOT choose a language from a menu.
+
+You must automatically identify the language used by the user.
+
+Supported languages include:
+
+- English
+- Luganda
+- Filipino
+- French
+- Spanish
+- German
+
+ALWAYS answer in the SAME LANGUAGE that the user used.
+
+Examples:
+
+If the user writes in English:
+Answer in English.
+
+If the user writes in Luganda:
+Answer in Luganda.
+
+If the user writes in Filipino:
+Answer in Filipino.
+
+If the user writes in French:
+Answer in French.
+
+If the user writes in Spanish:
+Answer in Spanish.
+
+If the user writes in German:
+Answer in German.
+
+Do NOT automatically translate the user's question into English
+and then answer in English.
+
+Do NOT explain that you detected their language unless the user asks.
+
+If the user mixes languages, use the language that is dominant in
+their question.
+
+If the language is unclear or cannot be confidently identified,
+use English.
+
+The language rule applies to the ENTIRE answer, including:
+
+- headings
+- explanations
+- bullet points
+- numbered lists
+- warnings
+- safety advice
+
+Do not switch back to English halfway through an answer unless the
+user specifically asks for English.
 
 ==================================================
 RESPONSE STYLE
@@ -1002,6 +1145,9 @@ If a question is completely unrelated to health, politely explain that
 Your Simple Health Assistant is primarily designed for health-related
 questions.
 
+Still answer briefly if a simple explanation is appropriate, but make it
+clear that the application is designed primarily for health information.
+
 ==================================================
 ANSWER LENGTH AND SPACING
 ==================================================
@@ -1039,24 +1185,31 @@ Do not end every response with the exact same sentence.
 
 The goal is to make answers feel natural, readable, spacious, and similar to
 a modern AI assistant rather than a compact block of text.
+"""
 
+
+# ==============================================================================
+# AI REQUEST
+# ==============================================================================
 
 def ask_ai(question):
     """
-    Send a question to Hugging Face and return the generated answer.
+    Send a question to Hugging Face.
 
-    Returns:
-        str | None
-
-    None means the AI could not be used and the caller should fall back
-    to the local health knowledge base.
+    The system prompt automatically tells the model to answer in the
+    same language as the user's question.
     """
 
     if not HF_TOKEN:
-        print("[AI] HF_TOKEN is not configured.")
+
+        print(
+            "[AI] HF_TOKEN is not configured."
+        )
+
         return None
 
     try:
+
         client = InferenceClient(
             api_key=HF_TOKEN,
             provider="auto",
@@ -1064,6 +1217,7 @@ def ask_ai(question):
 
         completion = client.chat.completions.create(
             model=HF_MODEL,
+
             messages=[
                 {
                     "role": "system",
@@ -1074,12 +1228,17 @@ def ask_ai(question):
                     "content": question,
                 },
             ],
+
             max_tokens=900,
             temperature=0.4,
         )
 
         if not completion.choices:
-            print("[AI] Hugging Face returned no choices.")
+
+            print(
+                "[AI] Hugging Face returned no choices."
+            )
+
             return None
 
         message = completion.choices[0].message
@@ -1094,41 +1253,174 @@ def ask_ai(question):
 
         answer = answer.strip()
 
-        return answer if answer else None
+        return (
+            answer
+            if answer
+            else None
+        )
 
     except Exception as error:
-        print(f"[AI] Hugging Face request failed: {error}")
+
+        print(
+            f"[AI] Hugging Face request failed: {error}"
+        )
+
         return None
+
+
+# ==============================================================================
+# LOCAL ANSWER TRANSLATION
+# ==============================================================================
+
+def translate_local_answer(
+    question,
+    local_answer,
+    topic_name=None
+):
+    """
+    Translate a local FAQ/topic answer into the same language as the
+    user's question.
+
+    This is used because the local FAQ itself is stored in English.
+
+    If AI translation is unavailable, the original English answer is
+    returned as a safe fallback.
+    """
+
+    if not HF_TOKEN:
+        return local_answer
+
+    context = ""
+
+    if topic_name:
+        context = (
+            f"\nHealth topic: {topic_name}\n"
+        )
+
+    translation_prompt = f"""
+The user asked this health question:
+
+{question}
+
+The application has this verified local health answer:
+
+{local_answer}
+
+{context}
+
+Rewrite the answer in the SAME LANGUAGE used by the user.
+
+Supported languages include:
+English, Luganda, Filipino, French, Spanish, and German.
+
+Important rules:
+
+1. Detect the user's language automatically.
+2. Answer entirely in that language.
+3. Do not translate the user's question back to English.
+4. Preserve the medical meaning and safety warnings.
+5. Do not add unsupported medical claims.
+6. Do not diagnose the user.
+7. Do not change the safety level of the original answer.
+8. Keep the answer clear and natural.
+9. You may improve the formatting with headings or bullet points when useful.
+10. If the user's language is unclear, use English.
+
+Return ONLY the answer.
+"""
+
+    try:
+
+        client = InferenceClient(
+            api_key=HF_TOKEN,
+            provider="auto",
+        )
+
+        completion = client.chat.completions.create(
+            model=HF_MODEL,
+
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a careful medical-information "
+                        "translator. Preserve the meaning and safety "
+                        "of the provided answer."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": translation_prompt,
+                },
+            ],
+
+            max_tokens=900,
+            temperature=0.2,
+        )
+
+        if not completion.choices:
+            return local_answer
+
+        message = completion.choices[0].message
+
+        if not message:
+            return local_answer
+
+        translated = message.content
+
+        if not translated:
+            return local_answer
+
+        translated = translated.strip()
+
+        return (
+            translated
+            if translated
+            else local_answer
+        )
+
+    except Exception as error:
+
+        print(
+            f"[AI] Local answer translation failed: {error}"
+        )
+
+        return local_answer
 
 
 # ==============================================================================
 # EMAIL LAYER
 # ==============================================================================
 
-SMTP_EMAIL = os.environ.get("SMTP_EMAIL")
-SMTP_APP_PASSWORD = os.environ.get("SMTP_APP_PASSWORD")
+SMTP_EMAIL = os.environ.get(
+    "SMTP_EMAIL"
+)
+
+SMTP_APP_PASSWORD = os.environ.get(
+    "SMTP_APP_PASSWORD"
+)
 
 EMAIL_RE = re.compile(
     r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 )
 
 
-def send_reset_email(to_email, reset_link):
-    """
-    Send a password reset link.
-
-    If SMTP is not configured, the link is printed to the server log.
-    """
+def send_reset_email(
+    to_email,
+    reset_link
+):
 
     print(
         f"[password reset] link for {to_email}: {reset_link}"
     )
 
     if not SMTP_EMAIL or not SMTP_APP_PASSWORD:
+
         print(
             "[password reset] SMTP_EMAIL / SMTP_APP_PASSWORD "
             "not set — email not sent."
         )
+
         return False
 
     subject = (
@@ -1149,6 +1441,7 @@ def send_reset_email(to_email, reset_link):
     msg["To"] = to_email
 
     try:
+
         with smtplib.SMTP(
             "smtp.gmail.com",
             587,
@@ -1171,9 +1464,11 @@ def send_reset_email(to_email, reset_link):
         return True
 
     except Exception as error:
+
         print(
             f"[password reset] failed to send email: {error}"
         )
+
         return False
 
 
@@ -1182,7 +1477,10 @@ def send_reset_email(to_email, reset_link):
 # ==============================================================================
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+
+    conn = sqlite3.connect(
+        DB_PATH
+    )
 
     conn.row_factory = sqlite3.Row
 
@@ -1194,6 +1492,7 @@ def get_db():
 
 
 def init_db():
+
     conn = get_db()
 
     conn.execute(
@@ -1240,11 +1539,15 @@ def init_db():
     )
 
     conn.commit()
+
     conn.close()
 
 
 def current_user():
-    user_id = session.get("user_id")
+
+    user_id = session.get(
+        "user_id"
+    )
 
     if not user_id:
         return None
@@ -1267,7 +1570,11 @@ def current_user():
 
     conn.close()
 
-    return dict(row) if row else None
+    return (
+        dict(row)
+        if row
+        else None
+    )
 
 
 # ==============================================================================
@@ -1293,9 +1600,12 @@ def api_topics():
 @app.get("/api/topics/<topic_id>")
 def api_topic_detail(topic_id):
 
-    topic = _topic_by_id(topic_id)
+    topic = _topic_by_id(
+        topic_id
+    )
 
     if topic is None:
+
         return jsonify({
             "error": "Topic not found"
         }), 404
@@ -1316,17 +1626,20 @@ def api_ask():
     ).strip()
 
     if not query:
+
         return jsonify({
             "error": "Missing query parameter 'q'"
         }), 400
 
-    faq_hit = _match_faq(query)
+    faq_hit = _match_faq(
+        query
+    )
 
     matched_topic_id = None
 
-    # --------------------------------------------------------------------------
+    # ==========================================================================
     # FIRST: LOCAL FAQ
-    # --------------------------------------------------------------------------
+    # ==========================================================================
 
     if faq_hit:
 
@@ -1336,11 +1649,26 @@ def api_ask():
 
         matched_topic_id = faq_hit["topic"]
 
+        # ----------------------------------------------------------------------
+        # If the question is English, use the verified local answer directly.
+        #
+        # For other languages, ask the AI to translate the verified answer
+        # while preserving its meaning and safety.
+        # ----------------------------------------------------------------------
+
+        answer = faq_hit["answer"]
+
+        translated_answer = translate_local_answer(
+            question=query,
+            local_answer=answer,
+            topic_name=topic["name"]
+        )
+
         result = {
             "matched": True,
             "kind": "faq",
             "question": query,
-            "answer": faq_hit["answer"],
+            "answer": translated_answer,
             "topic": {
                 "id": topic["id"],
                 "icon": topic["icon"],
@@ -1348,13 +1676,15 @@ def api_ask():
             },
         }
 
-    # --------------------------------------------------------------------------
+    # ==========================================================================
     # SECOND: HUGGING FACE
-    # --------------------------------------------------------------------------
+    # ==========================================================================
 
     else:
 
-        ai_answer = ask_ai(query)
+        ai_answer = ask_ai(
+            query
+        )
 
         if ai_answer:
 
@@ -1365,17 +1695,34 @@ def api_ask():
                 "answer": ai_answer,
             }
 
-        # ----------------------------------------------------------------------
+        # ======================================================================
         # THIRD: LOCAL TOPIC FALLBACK
-        # ----------------------------------------------------------------------
+        # ======================================================================
 
         else:
 
-            topic = _match_topic(query)
+            topic = _match_topic(
+                query
+            )
 
             if topic:
 
                 matched_topic_id = topic["id"]
+
+                local_topic_answer = (
+                    "\n".join(
+                        f"- {tip}"
+                        for tip in topic["tips"][:3]
+                    )
+                )
+
+                translated_topic_answer = (
+                    translate_local_answer(
+                        question=query,
+                        local_answer=local_topic_answer,
+                        topic_name=topic["name"]
+                    )
+                )
 
                 result = {
                     "matched": True,
@@ -1386,6 +1733,7 @@ def api_ask():
                         "name": topic["name"],
                     },
                     "tips": topic["tips"][:3],
+                    "translated_answer": translated_topic_answer,
                 }
 
             else:
@@ -1394,9 +1742,9 @@ def api_ask():
                     "matched": False
                 }
 
-    # --------------------------------------------------------------------------
+    # ==========================================================================
     # SAVE HISTORY
-    # --------------------------------------------------------------------------
+    # ==========================================================================
 
     user = current_user()
 
@@ -1422,6 +1770,7 @@ def api_ask():
         )
 
         conn.commit()
+
         conn.close()
 
     return jsonify(result)
@@ -1432,6 +1781,7 @@ def api_ask():
 # ==============================================================================
 
 def _valid_password(password):
+
     return len(password) >= 6
 
 
@@ -1455,16 +1805,19 @@ def api_signup():
     )
 
     if len(username) < 3:
+
         return jsonify({
             "error": "Username must be at least 3 characters."
         }), 400
 
     if not EMAIL_RE.match(email):
+
         return jsonify({
             "error": "Please enter a valid email address."
         }), 400
 
     if not _valid_password(password):
+
         return jsonify({
             "error": "Password must be at least 6 characters."
         }), 400
@@ -1522,6 +1875,7 @@ def api_signup():
     conn.close()
 
     session.permanent = True
+
     session["user_id"] = user_id
 
     return jsonify({
@@ -1572,11 +1926,13 @@ def api_login():
             password
         )
     ):
+
         return jsonify({
             "error": "Incorrect username or password."
         }), 401
 
     session.permanent = True
+
     session["user_id"] = row["id"]
 
     return jsonify({
@@ -1624,6 +1980,7 @@ def api_change_password():
     user = current_user()
 
     if not user:
+
         return jsonify({
             "error": "Not logged in."
         }), 401
@@ -1644,11 +2001,15 @@ def api_change_password():
         user["password_hash"],
         current_password
     ):
+
         return jsonify({
             "error": "Current password is incorrect."
         }), 401
 
-    if not _valid_password(new_password):
+    if not _valid_password(
+        new_password
+    ):
+
         return jsonify({
             "error": (
                 "New password must be at least 6 characters."
@@ -1674,6 +2035,7 @@ def api_change_password():
     )
 
     conn.commit()
+
     conn.close()
 
     return jsonify({
@@ -1708,6 +2070,7 @@ def api_forgot_password():
     })
 
     if not EMAIL_RE.match(email):
+
         return generic_response
 
     conn = get_db()
@@ -1727,7 +2090,9 @@ def api_forgot_password():
 
         return generic_response
 
-    token = secrets.token_urlsafe(32)
+    token = secrets.token_urlsafe(
+        32
+    )
 
     expires_at = (
         datetime.now(timezone.utc)
@@ -1754,6 +2119,7 @@ def api_forgot_password():
     )
 
     conn.commit()
+
     conn.close()
 
     reset_link = (
@@ -1785,11 +2151,15 @@ def api_reset_password():
     )
 
     if not token:
+
         return jsonify({
             "error": "Missing reset token."
         }), 400
 
-    if not _valid_password(new_password):
+    if not _valid_password(
+        new_password
+    ):
+
         return jsonify({
             "error": "Password must be at least 6 characters."
         }), 400
@@ -1832,6 +2202,7 @@ def api_reset_password():
     )
 
     if expires_at.tzinfo is None:
+
         expires_at = expires_at.replace(
             tzinfo=timezone.utc
         )
@@ -1873,6 +2244,7 @@ def api_reset_password():
     )
 
     conn.commit()
+
     conn.close()
 
     return jsonify({
@@ -1890,6 +2262,7 @@ def api_history():
     user = current_user()
 
     if not user:
+
         return jsonify({
             "error": "Not logged in."
         }), 401
@@ -1938,7 +2311,9 @@ def api_history():
             ),
         })
 
-    return jsonify(history)
+    return jsonify(
+        history
+    )
 
 
 # ==============================================================================
@@ -1950,9 +2325,11 @@ def health_check():
 
     return jsonify({
         "status": "ok",
+
         "service": (
             "Your Simple Health Assistant — backend API"
         ),
+
         "note": (
             "This is the API only. "
             "The app itself is the separate frontend."
@@ -1975,11 +2352,13 @@ if __name__ == "__main__":
 
     app.run(
         host="0.0.0.0",
+
         port=int(
             os.environ.get(
                 "PORT",
                 5000
             )
         ),
+
         debug=True,
     )
