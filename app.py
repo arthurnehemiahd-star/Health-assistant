@@ -1,87 +1,43 @@
 """
 ================================================================================
- YOUR SIMPLE HEALTH ASSISTANT — BACKEND
- A Creative Digital Tool for Improving Health Awareness and Better Development
+YOUR SIMPLE HEALTH ASSISTANT — BACKEND
+Multilingual Health Assistant
 ================================================================================
 
-This file is the WHOLE backend — a pure JSON API.
+Supported automatic response languages:
 
-Features:
-  - Health topics + FAQ knowledge base
-  - SQLite database
-  - User accounts and authentication
-  - Ask history
-  - Password reset emails
-  - Hugging Face AI
-  - Automatic language matching
-  - English, Luganda, Filipino, French, Spanish, German
-  - Flask API routes under /api/...
+    English
+    Luganda
+    Filipino
+    French
+    Spanish
+    German
 
-LANGUAGE BEHAVIOR
---------------------------------------------------------------------------------
+The user does NOT choose a language.
 
-The user does NOT need to select a language.
+The assistant automatically tries to detect the language from the question.
 
-English is the default.
+Examples:
 
-If the user writes in:
-    - Luganda
-    - Filipino
-    - French
-    - Spanish
-    - German
+    "What should I do for a headache?"
+        -> English answer
 
-the AI is instructed to answer in that same language.
+    "Que faire pour un mal de tête ?"
+        -> French answer
 
-Example:
+    "¿Qué debo hacer para un dolor de cabeza?"
+        -> Spanish answer
 
-    User: French
-    Assistant: French
+    "Was soll ich bei Kopfschmerzen tun?"
+        -> German answer
 
-    User: Luganda
-    Assistant: Luganda
+    "Ano ang dapat kong gawin para sa sakit ng ulo?"
+        -> Filipino answer
 
-    User: Spanish
-    Assistant: Spanish
+    "Kiki nakole ki ku mutwe?"
+        -> Luganda answer
 
-If the language cannot be confidently identified, English is used.
-
-The browser voice system is handled separately by the frontend.
-
---------------------------------------------------------------------------------
-RUN LOCALLY
---------------------------------------------------------------------------------
-
-    pip install -r requirements.txt
-    python app.py
-
---------------------------------------------------------------------------------
-RENDER
---------------------------------------------------------------------------------
-
-Start command:
-
-    gunicorn app:app
-
-Required environment variables:
-
-    SECRET_KEY
-    FRONTEND_ORIGIN
-    APP_BASE_URL
-
-Hugging Face:
-
-    HF_TOKEN
-    HF_MODEL
-
-Recommended model:
-
-    openai/gpt-oss-120b
-
-Password reset:
-
-    SMTP_EMAIL
-    SMTP_APP_PASSWORD
+English is the default when the language cannot be confidently detected.
 
 ================================================================================
 """
@@ -137,7 +93,11 @@ app.permanent_session_lifetime = timedelta(days=30)
 _frontend_is_https = FRONTEND_ORIGIN.startswith("https://")
 
 app.config.update(
-    SESSION_COOKIE_SAMESITE="None" if _frontend_is_https else "Lax",
+    SESSION_COOKIE_SAMESITE=(
+        "None"
+        if _frontend_is_https
+        else "Lax"
+    ),
     SESSION_COOKIE_SECURE=_frontend_is_https,
 )
 
@@ -148,6 +108,7 @@ app.config.update(
 
 @app.before_request
 def handle_preflight():
+
     if request.method == "OPTIONS":
         return app.make_default_options_response()
 
@@ -168,6 +129,342 @@ def add_cors_headers(response):
     )
 
     return response
+
+
+# ==============================================================================
+# LANGUAGES
+# ==============================================================================
+
+SUPPORTED_LANGUAGES = {
+    "en": {
+        "name": "English",
+        "speech": "en-US",
+    },
+
+    "lg": {
+        "name": "Luganda",
+        "speech": "lg-UG",
+    },
+
+    "fil": {
+        "name": "Filipino",
+        "speech": "fil-PH",
+    },
+
+    "fr": {
+        "name": "French",
+        "speech": "fr-FR",
+    },
+
+    "es": {
+        "name": "Spanish",
+        "speech": "es-ES",
+    },
+
+    "de": {
+        "name": "German",
+        "speech": "de-DE",
+    },
+}
+
+
+# ==============================================================================
+# LANGUAGE DETECTION
+# ==============================================================================
+
+LANGUAGE_KEYWORDS = {
+
+    "lg": [
+        "ki",
+        "ku",
+        "mu",
+        "nga",
+        "nze",
+        "ggwe",
+        "ffe",
+        "bo",
+        "era",
+        "kiki",
+        "lwaki",
+        "ntya",
+        "webale",
+        "mpulira",
+        "obulamu",
+        "omubiri",
+        "mutwe",
+        "kikalu",
+        "okulya",
+        "amazzi",
+        "omusujja",
+        "obulwadde",
+        "eddagala",
+        "omusaayi",
+        "okussa",
+        "okwebaka",
+        "okukola",
+        "okwewala",
+        "obulumi",
+    ],
+
+    "fil": [
+        "ang",
+        "ng",
+        "mga",
+        "ako",
+        "ikaw",
+        "siya",
+        "kami",
+        "tayo",
+        "ano",
+        "ito",
+        "iyon",
+        "paano",
+        "bakit",
+        "ano ang",
+        "paano ang",
+        "dapat",
+        "gawin",
+        "masakit",
+        "ulo",
+        "katawan",
+        "kalusugan",
+        "pagkain",
+        "tubig",
+        "tulog",
+        "sakit",
+        "gamot",
+        "lagnat",
+    ],
+
+    "fr": [
+        "le",
+        "la",
+        "les",
+        "un",
+        "une",
+        "des",
+        "est",
+        "sont",
+        "je",
+        "tu",
+        "il",
+        "elle",
+        "nous",
+        "vous",
+        "pour",
+        "avec",
+        "dans",
+        "sur",
+        "que",
+        "qui",
+        "quoi",
+        "comment",
+        "pourquoi",
+        "faire",
+        "santé",
+        "mal",
+        "tête",
+        "fièvre",
+        "douleur",
+        "manger",
+        "boire",
+        "sommeil",
+    ],
+
+    "es": [
+        "el",
+        "la",
+        "los",
+        "las",
+        "un",
+        "una",
+        "unos",
+        "unas",
+        "que",
+        "qué",
+        "como",
+        "cómo",
+        "por",
+        "para",
+        "con",
+        "esto",
+        "esta",
+        "este",
+        "hacer",
+        "salud",
+        "dolor",
+        "cabeza",
+        "fiebre",
+        "comer",
+        "beber",
+        "sueño",
+        "enfermedad",
+    ],
+
+    "de": [
+        "der",
+        "die",
+        "das",
+        "ein",
+        "eine",
+        "und",
+        "ist",
+        "sind",
+        "ich",
+        "du",
+        "er",
+        "sie",
+        "wir",
+        "ihr",
+        "was",
+        "wie",
+        "warum",
+        "für",
+        "mit",
+        "bei",
+        "machen",
+        "gesundheit",
+        "schmerz",
+        "kopf",
+        "fieber",
+        "essen",
+        "trinken",
+        "schlaf",
+        "krank",
+    ],
+}
+
+
+def detect_language(text):
+    """
+    Detect the most likely supported language.
+
+    English is the default.
+
+    This is intentionally lightweight so the application does not need
+    another language-detection package.
+    """
+
+    if not text:
+        return "en"
+
+    text_lower = text.lower().strip()
+
+    scores = {
+        language: 0
+        for language in SUPPORTED_LANGUAGES
+    }
+
+    # --------------------------------------------------------------------------
+    # Strong character clues
+    # --------------------------------------------------------------------------
+
+    french_characters = ["é", "è", "ê", "à", "ç", "ù", "ô", "î"]
+
+    spanish_characters = ["¿", "¡", "ñ", "á", "í", "ó", "ú"]
+
+    german_characters = ["ä", "ö", "ü", "ß"]
+
+    for char in french_characters:
+        if char in text_lower:
+            scores["fr"] += 3
+
+    for char in spanish_characters:
+        if char in text_lower:
+            scores["es"] += 3
+
+    for char in german_characters:
+        if char in text_lower:
+            scores["de"] += 3
+
+    # --------------------------------------------------------------------------
+    # Word scoring
+    # --------------------------------------------------------------------------
+
+    words = re.findall(
+        r"[a-zA-ZÀ-ÿ]+",
+        text_lower
+    )
+
+    word_set = set(words)
+
+    for language, keywords in LANGUAGE_KEYWORDS.items():
+
+        for keyword in keywords:
+
+            keyword_lower = keyword.lower()
+
+            if " " in keyword_lower:
+
+                if keyword_lower in text_lower:
+                    scores[language] += 3
+
+            elif keyword_lower in word_set:
+
+                scores[language] += 2
+
+    # --------------------------------------------------------------------------
+    # Special Luganda signals
+    # --------------------------------------------------------------------------
+
+    luganda_patterns = [
+        r"\bki[a-z]+",
+        r"\bku[a-z]+",
+        r"\bmu[a-z]+",
+        r"\boku[a-z]+",
+        r"\bobu[a-z]+",
+        r"\bom[a-z]+",
+        r"\bedd[a-z]+",
+    ]
+
+    for pattern in luganda_patterns:
+
+        if re.search(pattern, text_lower):
+            scores["lg"] += 1
+
+    # --------------------------------------------------------------------------
+    # Special Filipino signals
+    # --------------------------------------------------------------------------
+
+    filipino_patterns = [
+        r"\bano\b",
+        r"\bpaano\b",
+        r"\bbakit\b",
+        r"\baking\b",
+        r"\bako\b",
+        r"\bmo\b",
+        r"\bko\b",
+        r"\bng\b",
+    ]
+
+    for pattern in filipino_patterns:
+
+        if re.search(pattern, text_lower):
+            scores["fil"] += 1
+
+    # --------------------------------------------------------------------------
+    # Choose language
+    # --------------------------------------------------------------------------
+
+    best_language = max(
+        scores,
+        key=scores.get
+    )
+
+    best_score = scores[best_language]
+
+    # If there isn't enough evidence, use English.
+    if best_language != "en" and best_score < 2:
+        return "en"
+
+    return best_language
+
+
+def language_name(language_code):
+    return SUPPORTED_LANGUAGES.get(
+        language_code,
+        SUPPORTED_LANGUAGES["en"]
+    )["name"]
 
 
 # ==============================================================================
@@ -290,10 +587,6 @@ TOPICS = [
     },
 ]
 
-
-# ==============================================================================
-# TOPIC KEYWORDS
-# ==============================================================================
 
 TOPIC_KEYWORDS = {
 
@@ -890,7 +1183,7 @@ FAQ = [
 
 
 # ==============================================================================
-# MATCHING FUNCTIONS
+# MATCHING
 # ==============================================================================
 
 def _score(text, keywords):
@@ -900,7 +1193,7 @@ def _score(text, keywords):
     return sum(
         1
         for keyword in keywords
-        if keyword in text
+        if keyword.lower() in text
     )
 
 
@@ -917,6 +1210,7 @@ def _match_faq(query):
         )
 
         if score > best_score:
+
             best_entry = entry
             best_score = score
 
@@ -936,6 +1230,7 @@ def _match_topic(query):
         )
 
         if score > best_score:
+
             best_id = topic_id
             best_score = score
 
@@ -947,7 +1242,7 @@ def _match_topic(query):
 
 
 # ==============================================================================
-# HUGGING FACE AI
+# HUGGING FACE
 # ==============================================================================
 
 HF_TOKEN = os.environ.get("HF_TOKEN")
@@ -957,10 +1252,6 @@ HF_MODEL = os.environ.get(
     "openai/gpt-oss-120b"
 )
 
-
-# ==============================================================================
-# AI SYSTEM PROMPT
-# ==============================================================================
 
 AI_SYSTEM_PROMPT = """
 You are the AI assistant inside "Your Simple Health Assistant".
@@ -972,68 +1263,35 @@ hygiene, prevention, first aid, mental wellbeing, medical terminology,
 health science, or general health questions.
 
 ==================================================
-AUTOMATIC LANGUAGE BEHAVIOR
+LANGUAGE
 ==================================================
 
-IMPORTANT:
+The user's language has already been detected by the application.
 
-The user does NOT choose a language from a menu.
+You MUST answer entirely in the requested language.
 
-You must automatically identify the language used by the user.
+Requested language:
 
-Supported languages include:
+{language}
 
-- English
-- Luganda
-- Filipino
-- French
-- Spanish
-- German
+If the requested language is English, answer in English.
 
-ALWAYS answer in the SAME LANGUAGE that the user used.
+If the requested language is Luganda, answer in natural, understandable
+Luganda.
 
-Examples:
+If the requested language is Filipino, answer in natural Filipino.
 
-If the user writes in English:
-Answer in English.
+If the requested language is French, answer in natural French.
 
-If the user writes in Luganda:
-Answer in Luganda.
+If the requested language is Spanish, answer in natural Spanish.
 
-If the user writes in Filipino:
-Answer in Filipino.
+If the requested language is German, answer in natural German.
 
-If the user writes in French:
-Answer in French.
+Do not translate the user's question back into English before answering.
 
-If the user writes in Spanish:
-Answer in Spanish.
+Do not mention language detection unless the user specifically asks about it.
 
-If the user writes in German:
-Answer in German.
-
-Do NOT automatically translate the user's question into English
-and then answer in English.
-
-Do NOT explain that you detected their language unless the user asks.
-
-If the user mixes languages, use the language that is dominant in
-their question.
-
-If the language is unclear or cannot be confidently identified,
-use English.
-
-The language rule applies to the ENTIRE answer, including:
-
-- headings
-- explanations
-- bullet points
-- numbered lists
-- warnings
-- safety advice
-
-Do not switch back to English halfway through an answer unless the
-user specifically asks for English.
+Keep important medical terminology understandable.
 
 ==================================================
 RESPONSE STYLE
@@ -1145,9 +1403,6 @@ If a question is completely unrelated to health, politely explain that
 Your Simple Health Assistant is primarily designed for health-related
 questions.
 
-Still answer briefly if a simple explanation is appropriate, but make it
-clear that the application is designed primarily for health information.
-
 ==================================================
 ANSWER LENGTH AND SPACING
 ==================================================
@@ -1188,17 +1443,7 @@ a modern AI assistant rather than a compact block of text.
 """
 
 
-# ==============================================================================
-# AI REQUEST
-# ==============================================================================
-
-def ask_ai(question):
-    """
-    Send a question to Hugging Face.
-
-    The system prompt automatically tells the model to answer in the
-    same language as the user's question.
-    """
+def ask_ai(question, language="en"):
 
     if not HF_TOKEN:
 
@@ -1215,13 +1460,22 @@ def ask_ai(question):
             provider="auto",
         )
 
+        language_label = language_name(
+            language
+        )
+
+        system_prompt = AI_SYSTEM_PROMPT.format(
+            language=language_label
+        )
+
         completion = client.chat.completions.create(
+
             model=HF_MODEL,
 
             messages=[
                 {
                     "role": "system",
-                    "content": AI_SYSTEM_PROMPT,
+                    "content": system_prompt,
                 },
                 {
                     "role": "user",
@@ -1230,6 +1484,7 @@ def ask_ai(question):
             ],
 
             max_tokens=900,
+
             temperature=0.4,
         )
 
@@ -1269,64 +1524,41 @@ def ask_ai(question):
 
 
 # ==============================================================================
-# LOCAL ANSWER TRANSLATION
+# TRANSLATE LOCAL FAQ ANSWERS
 # ==============================================================================
 
-def translate_local_answer(
-    question,
-    local_answer,
-    topic_name=None
-):
-    """
-    Translate a local FAQ/topic answer into the same language as the
-    user's question.
+def translate_answer(answer, language):
 
-    This is used because the local FAQ itself is stored in English.
-
-    If AI translation is unavailable, the original English answer is
-    returned as a safe fallback.
     """
+    Translate a local English FAQ answer into the detected language.
+
+    English is returned immediately without using AI.
+    """
+
+    if language == "en":
+        return answer
 
     if not HF_TOKEN:
-        return local_answer
+        return answer
 
-    context = ""
+    language_label = language_name(
+        language
+    )
 
-    if topic_name:
-        context = (
-            f"\nHealth topic: {topic_name}\n"
-        )
+    prompt = f"""
+Translate the following health-information answer into {language_label}.
 
-    translation_prompt = f"""
-The user asked this health question:
+Keep the meaning accurate.
 
-{question}
+Do not add new medical information.
 
-The application has this verified local health answer:
+Keep the answer easy to understand.
 
-{local_answer}
+Return only the translated answer.
 
-{context}
+English source:
 
-Rewrite the answer in the SAME LANGUAGE used by the user.
-
-Supported languages include:
-English, Luganda, Filipino, French, Spanish, and German.
-
-Important rules:
-
-1. Detect the user's language automatically.
-2. Answer entirely in that language.
-3. Do not translate the user's question back to English.
-4. Preserve the medical meaning and safety warnings.
-5. Do not add unsupported medical claims.
-6. Do not diagnose the user.
-7. Do not change the safety level of the original answer.
-8. Keep the answer clear and natural.
-9. You may improve the formatting with headings or bullet points when useful.
-10. If the user's language is unclear, use English.
-
-Return ONLY the answer.
+{answer}
 """
 
     try:
@@ -1337,59 +1569,59 @@ Return ONLY the answer.
         )
 
         completion = client.chat.completions.create(
+
             model=HF_MODEL,
 
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "You are a careful medical-information "
-                        "translator. Preserve the meaning and safety "
-                        "of the provided answer."
+                        "You are a careful medical-information translator."
                     ),
                 },
                 {
                     "role": "user",
-                    "content": translation_prompt,
+                    "content": prompt,
                 },
             ],
 
-            max_tokens=900,
+            max_tokens=700,
+
             temperature=0.2,
         )
 
         if not completion.choices:
-            return local_answer
+            return answer
 
         message = completion.choices[0].message
 
         if not message:
-            return local_answer
+            return answer
 
         translated = message.content
 
         if not translated:
-            return local_answer
+            return answer
 
         translated = translated.strip()
 
         return (
             translated
             if translated
-            else local_answer
+            else answer
         )
 
     except Exception as error:
 
         print(
-            f"[AI] Local answer translation failed: {error}"
+            f"[Translation] Failed: {error}"
         )
 
-        return local_answer
+        return answer
 
 
 # ==============================================================================
-# EMAIL LAYER
+# EMAIL
 # ==============================================================================
 
 SMTP_EMAIL = os.environ.get(
@@ -1414,7 +1646,10 @@ def send_reset_email(
         f"[password reset] link for {to_email}: {reset_link}"
     )
 
-    if not SMTP_EMAIL or not SMTP_APP_PASSWORD:
+    if (
+        not SMTP_EMAIL
+        or not SMTP_APP_PASSWORD
+    ):
 
         print(
             "[password reset] SMTP_EMAIL / SMTP_APP_PASSWORD "
@@ -1578,7 +1813,7 @@ def current_user():
 
 
 # ==============================================================================
-# API — TOPICS
+# TOPICS API
 # ==============================================================================
 
 @app.get("/api/topics")
@@ -1614,7 +1849,7 @@ def api_topic_detail(topic_id):
 
 
 # ==============================================================================
-# API — ASK AI
+# ASK API
 # ==============================================================================
 
 @app.get("/api/ask")
@@ -1631,15 +1866,28 @@ def api_ask():
             "error": "Missing query parameter 'q'"
         }), 400
 
+    # --------------------------------------------------------------------------
+    # AUTOMATIC LANGUAGE DETECTION
+    # --------------------------------------------------------------------------
+
+    detected_language = detect_language(
+        query
+    )
+
+    print(
+        f"[LANGUAGE] '{query}' -> "
+        f"{language_name(detected_language)}"
+    )
+
     faq_hit = _match_faq(
         query
     )
 
     matched_topic_id = None
 
-    # ==========================================================================
-    # FIRST: LOCAL FAQ
-    # ==========================================================================
+    # --------------------------------------------------------------------------
+    # LOCAL FAQ
+    # --------------------------------------------------------------------------
 
     if faq_hit:
 
@@ -1647,28 +1895,31 @@ def api_ask():
             faq_hit["topic"]
         )
 
-        matched_topic_id = faq_hit["topic"]
+        matched_topic_id = (
+            faq_hit["topic"]
+        )
 
-        # ----------------------------------------------------------------------
-        # If the question is English, use the verified local answer directly.
-        #
-        # For other languages, ask the AI to translate the verified answer
-        # while preserving its meaning and safety.
-        # ----------------------------------------------------------------------
-
-        answer = faq_hit["answer"]
-
-        translated_answer = translate_local_answer(
-            question=query,
-            local_answer=answer,
-            topic_name=topic["name"]
+        answer = translate_answer(
+            faq_hit["answer"],
+            detected_language
         )
 
         result = {
+
             "matched": True,
+
             "kind": "faq",
+
             "question": query,
-            "answer": translated_answer,
+
+            "answer": answer,
+
+            "language": detected_language,
+
+            "language_name": language_name(
+                detected_language
+            ),
+
             "topic": {
                 "id": topic["id"],
                 "icon": topic["icon"],
@@ -1676,28 +1927,39 @@ def api_ask():
             },
         }
 
-    # ==========================================================================
-    # SECOND: HUGGING FACE
-    # ==========================================================================
+    # --------------------------------------------------------------------------
+    # HUGGING FACE
+    # --------------------------------------------------------------------------
 
     else:
 
         ai_answer = ask_ai(
-            query
+            query,
+            detected_language
         )
 
         if ai_answer:
 
             result = {
+
                 "matched": True,
+
                 "kind": "ai",
+
                 "question": query,
+
                 "answer": ai_answer,
+
+                "language": detected_language,
+
+                "language_name": language_name(
+                    detected_language
+                ),
             }
 
-        # ======================================================================
-        # THIRD: LOCAL TOPIC FALLBACK
-        # ======================================================================
+        # ----------------------------------------------------------------------
+        # LOCAL TOPIC FALLBACK
+        # ----------------------------------------------------------------------
 
         else:
 
@@ -1707,44 +1969,64 @@ def api_ask():
 
             if topic:
 
-                matched_topic_id = topic["id"]
-
-                local_topic_answer = (
-                    "\n".join(
-                        f"- {tip}"
-                        for tip in topic["tips"][:3]
-                    )
+                matched_topic_id = (
+                    topic["id"]
                 )
 
-                translated_topic_answer = (
-                    translate_local_answer(
-                        question=query,
-                        local_answer=local_topic_answer,
-                        topic_name=topic["name"]
-                    )
-                )
+                tips = topic["tips"][:3]
+
+                if detected_language != "en":
+
+                    translated_tips = []
+
+                    for tip in tips:
+
+                        translated_tips.append(
+                            translate_answer(
+                                tip,
+                                detected_language
+                            )
+                        )
+
+                    tips = translated_tips
 
                 result = {
+
                     "matched": True,
+
                     "kind": "topic",
+
+                    "language": detected_language,
+
+                    "language_name": language_name(
+                        detected_language
+                    ),
+
                     "topic": {
                         "id": topic["id"],
                         "icon": topic["icon"],
                         "name": topic["name"],
                     },
-                    "tips": topic["tips"][:3],
-                    "translated_answer": translated_topic_answer,
+
+                    "tips": tips,
                 }
 
             else:
 
                 result = {
-                    "matched": False
+
+                    "matched": False,
+
+                    "language": detected_language,
+
+                    "language_name": language_name(
+                        detected_language
+                    ),
                 }
 
-    # ==========================================================================
+    # --------------------------------------------------------------------------
     # SAVE HISTORY
-    # ==========================================================================
+    # --------------------------------------------------------------------------
 
     user = current_user()
 
@@ -1788,38 +2070,50 @@ def _valid_password(password):
 @app.post("/api/auth/signup")
 def api_signup():
 
-    data = request.get_json(
-        silent=True
-    ) or {}
+    data = (
+        request.get_json(
+            silent=True
+        )
+        or {}
+    )
 
     username = (
-        data.get("username") or ""
+        data.get("username")
+        or ""
     ).strip()
 
     email = (
-        data.get("email") or ""
+        data.get("email")
+        or ""
     ).strip().lower()
 
     password = (
-        data.get("password") or ""
+        data.get("password")
+        or ""
     )
 
     if len(username) < 3:
 
         return jsonify({
-            "error": "Username must be at least 3 characters."
+            "error": (
+                "Username must be at least 3 characters."
+            )
         }), 400
 
     if not EMAIL_RE.match(email):
 
         return jsonify({
-            "error": "Please enter a valid email address."
+            "error": (
+                "Please enter a valid email address."
+            )
         }), 400
 
     if not _valid_password(password):
 
         return jsonify({
-            "error": "Password must be at least 6 characters."
+            "error": (
+                "Password must be at least 6 characters."
+            )
         }), 400
 
     conn = get_db()
@@ -1879,27 +2173,34 @@ def api_signup():
     session["user_id"] = user_id
 
     return jsonify({
+
         "user": {
             "id": user_id,
             "username": username,
             "email": email,
         }
+
     }), 201
 
 
 @app.post("/api/auth/login")
 def api_login():
 
-    data = request.get_json(
-        silent=True
-    ) or {}
+    data = (
+        request.get_json(
+            silent=True
+        )
+        or {}
+    )
 
     username = (
-        data.get("username") or ""
+        data.get("username")
+        or ""
     ).strip()
 
     password = (
-        data.get("password") or ""
+        data.get("password")
+        or ""
     )
 
     conn = get_db()
@@ -1928,7 +2229,9 @@ def api_login():
     ):
 
         return jsonify({
-            "error": "Incorrect username or password."
+            "error": (
+                "Incorrect username or password."
+            )
         }), 401
 
     session.permanent = True
@@ -1936,11 +2239,13 @@ def api_login():
     session["user_id"] = row["id"]
 
     return jsonify({
+
         "user": {
             "id": row["id"],
             "username": row["username"],
             "email": row["email"],
         }
+
     })
 
 
@@ -1960,12 +2265,15 @@ def api_me():
     user = current_user()
 
     public_user = (
+
         {
             "id": user["id"],
             "username": user["username"],
             "email": user["email"],
         }
+
         if user
+
         else None
     )
 
@@ -1985,16 +2293,21 @@ def api_change_password():
             "error": "Not logged in."
         }), 401
 
-    data = request.get_json(
-        silent=True
-    ) or {}
+    data = (
+        request.get_json(
+            silent=True
+        )
+        or {}
+    )
 
     current_password = (
-        data.get("current_password") or ""
+        data.get("current_password")
+        or ""
     )
 
     new_password = (
-        data.get("new_password") or ""
+        data.get("new_password")
+        or ""
     )
 
     if not check_password_hash(
@@ -2003,7 +2316,9 @@ def api_change_password():
     ):
 
         return jsonify({
-            "error": "Current password is incorrect."
+            "error": (
+                "Current password is incorrect."
+            )
         }), 401
 
     if not _valid_password(
@@ -2053,20 +2368,27 @@ RESET_TOKEN_LIFETIME_MINUTES = 30
 @app.post("/api/auth/forgot-password")
 def api_forgot_password():
 
-    data = request.get_json(
-        silent=True
-    ) or {}
+    data = (
+        request.get_json(
+            silent=True
+        )
+        or {}
+    )
 
     email = (
-        data.get("email") or ""
+        data.get("email")
+        or ""
     ).strip().lower()
 
     generic_response = jsonify({
+
         "ok": True,
+
         "message": (
             "If that email is registered, "
             "a reset link has been sent."
         ),
+
     })
 
     if not EMAIL_RE.match(email):
@@ -2095,7 +2417,9 @@ def api_forgot_password():
     )
 
     expires_at = (
-        datetime.now(timezone.utc)
+        datetime.now(
+            timezone.utc
+        )
         + timedelta(
             minutes=RESET_TOKEN_LIFETIME_MINUTES
         )
@@ -2138,22 +2462,29 @@ def api_forgot_password():
 @app.post("/api/auth/reset-password")
 def api_reset_password():
 
-    data = request.get_json(
-        silent=True
-    ) or {}
+    data = (
+        request.get_json(
+            silent=True
+        )
+        or {}
+    )
 
     token = (
-        data.get("token") or ""
+        data.get("token")
+        or ""
     ).strip()
 
     new_password = (
-        data.get("new_password") or ""
+        data.get("new_password")
+        or ""
     )
 
     if not token:
 
         return jsonify({
-            "error": "Missing reset token."
+            "error": (
+                "Missing reset token."
+            )
         }), 400
 
     if not _valid_password(
@@ -2161,7 +2492,9 @@ def api_reset_password():
     ):
 
         return jsonify({
-            "error": "Password must be at least 6 characters."
+            "error": (
+                "Password must be at least 6 characters."
+            )
         }), 400
 
     conn = get_db()
@@ -2184,7 +2517,9 @@ def api_reset_password():
         conn.close()
 
         return jsonify({
-            "error": "This reset link is invalid."
+            "error": (
+                "This reset link is invalid."
+            )
         }), 400
 
     if row["used"]:
@@ -2207,7 +2542,9 @@ def api_reset_password():
             tzinfo=timezone.utc
         )
 
-    if datetime.now(timezone.utc) > expires_at:
+    if datetime.now(
+        timezone.utc
+    ) > expires_at:
 
         conn.close()
 
@@ -2290,23 +2627,32 @@ def api_history():
     for row in rows:
 
         topic = (
+
             _topic_by_id(
                 row["matched_topic"]
             )
+
             if row["matched_topic"]
+
             else None
         )
 
         history.append({
+
             "question": row["question"],
+
             "asked_at": row["asked_at"],
+
             "topic": (
+
                 {
                     "id": topic["id"],
                     "icon": topic["icon"],
                     "name": topic["name"],
                 }
+
                 if topic
+
                 else None
             ),
         })
@@ -2317,6 +2663,38 @@ def api_history():
 
 
 # ==============================================================================
+# LANGUAGE INFORMATION API
+# ==============================================================================
+
+@app.get("/api/languages")
+def api_languages():
+
+    """
+    Provides language information to the frontend.
+
+    The frontend does not need to display a language selector.
+    It can use this information for speech synthesis/recognition.
+    """
+
+    return jsonify({
+
+        "default": "en",
+
+        "languages": [
+            {
+                "code": code,
+                "name": info["name"],
+                "speech": info["speech"],
+            }
+
+            for code, info
+            in SUPPORTED_LANGUAGES.items()
+        ],
+
+    })
+
+
+# ==============================================================================
 # ROOT HEALTH CHECK
 # ==============================================================================
 
@@ -2324,6 +2702,7 @@ def api_history():
 def health_check():
 
     return jsonify({
+
         "status": "ok",
 
         "service": (
@@ -2334,6 +2713,7 @@ def health_check():
             "This is the API only. "
             "The app itself is the separate frontend."
         ),
+
     })
 
 
@@ -2351,6 +2731,7 @@ init_db()
 if __name__ == "__main__":
 
     app.run(
+
         host="0.0.0.0",
 
         port=int(
