@@ -131,3 +131,121 @@ main{ flex:1; padding:44px 56px 80px; max-width:900px; }
 .gate-tab.active{ background:var(--card); color:var(--teal-900); }
 .gate-link{ background:none; border:none; color:var(--teal-700); font-size:12.5px; cursor:pointer; padding:0; text-decoration:underline; margin-top:4px; }
 .gate-back{ background:none; border:none; color:var(--ink-soft); font-size:13px; cursor:pointer; padding:0; margin-bottom:14px; text-decoration:underline; }
+
+/* ==========================================================================
+   AI ANSWER FORMATTING
+   ========================================================================== */
+
+.answer-text {
+    font-size: 1rem;
+    line-height: 1.8;
+    color: var(--ink);
+    max-width: 850px;
+}
+
+
+/* Paragraphs */
+
+.answer-text p {
+    margin: 0 0 1.25rem;
+    line-height: 1.8;
+}
+
+.answer-text p:last-child {
+    margin-bottom: 0;
+}
+
+
+/* Main headings */
+
+.answer-text h2 {
+    margin: 2rem 0 0.9rem;
+    font-size: 1.35rem;
+    line-height: 1.35;
+    font-weight: 700;
+    color: var(--teal-900);
+}
+
+.answer-text h2:first-child {
+    margin-top: 0;
+}
+
+
+/* Smaller headings */
+
+.answer-text h3 {
+    margin: 1.6rem 0 0.7rem;
+    font-size: 1.1rem;
+    line-height: 1.4;
+    font-weight: 700;
+    color: var(--teal-700);
+}
+
+
+/* Bullet and numbered lists */
+
+.answer-text ul,
+.answer-text ol {
+    margin: 0.75rem 0 1.5rem 1.5rem;
+    padding-left: 1rem;
+}
+
+.answer-text li {
+    margin-bottom: 0.7rem;
+    padding-left: 0.25rem;
+    line-height: 1.7;
+}
+
+.answer-text li:last-child {
+    margin-bottom: 0;
+}
+
+
+/* Bold text */
+
+.answer-text strong {
+    font-weight: 700;
+}
+
+
+/* Italic text */
+
+.answer-text em {
+    font-style: italic;
+}
+
+
+/* Inline code */
+
+.answer-text code {
+    padding: 0.15rem 0.35rem;
+    border-radius: 5px;
+    font-size: 0.9em;
+    background: var(--sage-light);
+}
+
+
+/* Better spacing on smaller screens */
+
+@media (max-width: 600px) {
+    .answer-text {
+        font-size: 0.98rem;
+        line-height: 1.75;
+    }
+
+    .answer-text h2 {
+        margin-top: 1.6rem;
+        font-size: 1.2rem;
+    }
+
+    .answer-text h3 {
+        margin-top: 1.3rem;
+        font-size: 1.05rem;
+    }
+
+    .answer-text ul,
+    .answer-text ol {
+        margin-left: 1rem;
+        padding-left: 1rem;
+    }
+}
