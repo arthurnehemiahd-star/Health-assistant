@@ -1,26 +1,36 @@
-/* ------------------------------------------------------------------------
-   FRONTEND LOGIC
-   ------------------------------------------------------------------------
-   Your Simple Health Assistant
+/* ============================================================================
+   YOUR SIMPLE HEALTH ASSISTANT
+   ---------------------------------------------------------------------------
+   Frontend logic
 
-   Includes:
+   Features:
      - Login / signup
      - Forgot password
      - Account page
      - Health topics
      - AI questions
      - Question history
-     - Markdown-style AI formatting
-     - Voice -> text
-     - Text -> voice
-     - Stop speaking
+     - Markdown rendering
+     - Automatic language detection
+     - English default
+     - Luganda
+     - Filipino
+     - French
+     - Spanish
+     - German
+     - Floating voice orb
+     - Automatic speech recognition
+     - Automatic text-to-speech
+     - No start/stop voice buttons
+============================================================================ */
 
-   Voice features use browser-native Web Speech APIs.
------------------------------------------------------------------------- */
 
-// API_BASE comes from config.js, loaded before this file.
+// ============================================================================
+// API
+// ============================================================================
 
 const API = {
+
   topics: () =>
     fetch(`${API_BASE}/api/topics`, {
       credentials: "include"
@@ -118,6 +128,10 @@ const API = {
 };
 
 
+// ============================================================================
+// GLOBAL STATE
+// ============================================================================
+
 const root = document.getElementById("root");
 
 let TOPICS = [];
@@ -126,13 +140,320 @@ let current = "home";
 
 let speechRecognition = null;
 let isListening = false;
+let isSpeaking = false;
+let voiceSupported = false;
+
+let currentVoiceLanguage = "en-US";
 
 
-/* ==========================================================================
-   SAFE MARKDOWN RENDERER
-   ========================================================================== */
+// ============================================================================
+// LANGUAGE SYSTEM
+// ============================================================================
+
+const LANGUAGES = {
+  english: {
+    name: "English",
+    code: "en-US",
+    aliases: [
+      "english",
+      "in english",
+      "answer in english",
+      "speak english"
+    ]
+  },
+
+  luganda: {
+    name: "Luganda",
+    code: "lg-UG",
+    aliases: [
+      "luganda",
+      "mu luganda",
+      "answer in luganda",
+      "speak luganda"
+    ]
+  },
+
+  filipino: {
+    name: "Filipino",
+    code: "fil-PH",
+    aliases: [
+      "filipino",
+      "tagalog",
+      "in filipino",
+      "in tagalog",
+      "answer in filipino",
+      "speak filipino"
+    ]
+  },
+
+  french: {
+    name: "French",
+    code: "fr-FR",
+    aliases: [
+      "french",
+      "français",
+      "francais",
+      "en français",
+      "answer in french",
+      "speak french"
+    ]
+  },
+
+  spanish: {
+    name: "Spanish",
+    code: "es-ES",
+    aliases: [
+      "spanish",
+      "español",
+      "espanol",
+      "en español",
+      "answer in spanish",
+      "speak spanish"
+    ]
+  },
+
+  german: {
+    name: "German",
+    code: "de-DE",
+    aliases: [
+      "german",
+      "deutsch",
+      "auf deutsch",
+      "answer in german",
+      "speak german"
+    ]
+  }
+};
+
+
+// Detect an explicitly requested language.
+
+function detectRequestedLanguage(text) {
+
+  const lower = String(text || "").toLowerCase();
+
+  for (const language of Object.values(LANGUAGES)) {
+
+    for (const alias of language.aliases) {
+
+      if (lower.includes(alias.toLowerCase())) {
+        return language;
+      }
+
+    }
+
+  }
+
+  return null;
+}
+
+
+// Detect language from the actual question.
+//
+// This is intentionally conservative.
+// English is the default if we are not reasonably confident.
+
+function detectLanguage(text) {
+
+  const requested = detectRequestedLanguage(text);
+
+  if (requested) {
+    return requested;
+  }
+
+  const lower = String(text || "").toLowerCase();
+
+  // Luganda clues
+  const lugandaWords = [
+    "ki",
+    "ndi",
+    "nnyamba",
+    "omubiri",
+    "obulamu",
+    "obulwadde",
+    "amazzi",
+    "omutwe",
+    "omusujja",
+    "okulya",
+    "okunywa",
+    "omwana",
+    "omuntu"
+  ];
+
+  // Filipino clues
+  const filipinoWords = [
+    "ako",
+    "ang",
+    "mga",
+    "kung",
+    "paano",
+    "bakit",
+    "ano",
+    "ito",
+    "iyan",
+    "sakit",
+    "katawan",
+    "tubig",
+    "lagnat"
+  ];
+
+  // French clues
+  const frenchWords = [
+    "bonjour",
+    "comment",
+    "pourquoi",
+    "avec",
+    "sans",
+    "santé",
+    "sante",
+    "maladie",
+    "douleur",
+    "fièvre",
+    "fievre",
+    "eau",
+    "maux"
+  ];
+
+  // Spanish clues
+  const spanishWords = [
+    "hola",
+    "cómo",
+    "como",
+    "por qué",
+    "porque",
+    "salud",
+    "enfermedad",
+    "dolor",
+    "fiebre",
+    "agua",
+    "cuerpo",
+    "síntomas",
+    "sintomas"
+  ];
+
+  // German clues
+  const germanWords = [
+    "hallo",
+    "wie",
+    "warum",
+    "gesundheit",
+    "krankheit",
+    "schmerzen",
+    "fieber",
+    "wasser",
+    "körper",
+    "koerper",
+    "symptome"
+  ];
+
+
+  function score(words) {
+
+    let score = 0;
+
+    for (const word of words) {
+
+      const pattern = new RegExp(
+        `\\b${escapeRegExp(word)}\\b`,
+        "i"
+      );
+
+      if (pattern.test(lower)) {
+        score++;
+      }
+
+    }
+
+    return score;
+  }
+
+
+  const scores = {
+    luganda: score(lugandaWords),
+    filipino: score(filipinoWords),
+    french: score(frenchWords),
+    spanish: score(spanishWords),
+    german: score(germanWords)
+  };
+
+
+  let bestLanguage = null;
+  let bestScore = 0;
+
+  for (const [key, value] of Object.entries(scores)) {
+
+    if (value > bestScore) {
+      bestLanguage = LANGUAGES[key];
+      bestScore = value;
+    }
+
+  }
+
+
+  if (bestScore >= 2) {
+    return bestLanguage;
+  }
+
+  return LANGUAGES.english;
+}
+
+
+function escapeRegExp(value) {
+  return String(value).replace(
+    /[.*+?^${}()|[\]\\]/g,
+    "\\$&"
+  );
+}
+
+
+// Remove language instruction before sending question to AI.
+
+function removeLanguageInstruction(text) {
+
+  let result = String(text || "").trim();
+
+  const patterns = [
+    /answer in english/i,
+    /answer in luganda/i,
+    /answer in filipino/i,
+    /answer in tagalog/i,
+    /answer in french/i,
+    /answer in spanish/i,
+    /answer in german/i,
+
+    /speak english/i,
+    /speak luganda/i,
+    /speak filipino/i,
+    /speak tagalog/i,
+    /speak french/i,
+    /speak spanish/i,
+    /speak german/i,
+
+    /in english/i,
+    /in luganda/i,
+    /in filipino/i,
+    /in tagalog/i,
+    /in french/i,
+    /in spanish/i,
+    /in german/i
+  ];
+
+  for (const pattern of patterns) {
+    result = result.replace(pattern, "");
+  }
+
+  return result
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+
+// ============================================================================
+// HTML / MARKDOWN
+// ============================================================================
 
 function escapeHtml(text) {
+
   return String(text)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -146,19 +467,16 @@ function formatInlineMarkdown(value) {
 
   let result = escapeHtml(value);
 
-  // Bold
   result = result.replace(
     /\*\*(.+?)\*\*/g,
     "<strong>$1</strong>"
   );
 
-  // Italic
   result = result.replace(
     /(^|[^*])\*([^*]+)\*(?!\*)/g,
     "$1<em>$2</em>"
   );
 
-  // Inline code
   result = result.replace(
     /`([^`]+)`/g,
     "<code>$1</code>"
@@ -170,13 +488,12 @@ function formatInlineMarkdown(value) {
 
 function renderMarkdown(text) {
 
-  if (!text) {
-    return "";
-  }
+  if (!text) return "";
 
-  const lines = String(text)
-    .replace(/\r\n/g, "\n")
-    .split("\n");
+  const lines =
+    String(text)
+      .replace(/\r\n/g, "\n")
+      .split("\n");
 
   let html = "";
   let paragraph = [];
@@ -187,7 +504,9 @@ function renderMarkdown(text) {
 
     if (listType === "ul") {
       html += "</ul>";
-    } else if (listType === "ol") {
+    }
+
+    else if (listType === "ol") {
       html += "</ol>";
     }
 
@@ -202,14 +521,12 @@ function renderMarkdown(text) {
     }
 
     const content =
-      paragraph.join(" ").trim();
+      paragraph
+        .join(" ")
+        .trim();
 
     if (content) {
-      html += `
-        <p>
-          ${formatInlineMarkdown(content)}
-        </p>
-      `;
+      html += `<p>${formatInlineMarkdown(content)}</p>`;
     }
 
     paragraph = [];
@@ -218,21 +535,15 @@ function renderMarkdown(text) {
 
   for (const rawLine of lines) {
 
-    const line =
-      rawLine.trim();
+    const line = rawLine.trim();
 
-
-    // Empty line
     if (!line) {
-
       closeParagraph();
       closeList();
-
       continue;
     }
 
 
-    // H2
     if (line.startsWith("## ")) {
 
       closeParagraph();
@@ -250,7 +561,6 @@ function renderMarkdown(text) {
     }
 
 
-    // H3
     if (line.startsWith("### ")) {
 
       closeParagraph();
@@ -268,7 +578,6 @@ function renderMarkdown(text) {
     }
 
 
-    // Bullet list
     const bulletMatch =
       line.match(/^[-*]\s+(.+)$/);
 
@@ -297,7 +606,6 @@ function renderMarkdown(text) {
     }
 
 
-    // Numbered list
     const numberedMatch =
       line.match(/^\d+\.\s+(.+)$/);
 
@@ -326,7 +634,6 @@ function renderMarkdown(text) {
     }
 
 
-    // Normal paragraph
     closeList();
 
     paragraph.push(line);
@@ -340,51 +647,211 @@ function renderMarkdown(text) {
 }
 
 
-/* ==========================================================================
-   TEXT TO SPEECH
-   ========================================================================== */
+// ============================================================================
+// AUDIO
+// ============================================================================
+
+let audioContext = null;
+
+
+function initAudio() {
+
+  if (audioContext) {
+    return audioContext;
+  }
+
+  const AudioContext =
+    window.AudioContext ||
+    window.webkitAudioContext;
+
+  if (!AudioContext) {
+    return null;
+  }
+
+  audioContext = new AudioContext();
+
+  return audioContext;
+}
+
+
+function playTone(
+  frequency = 440,
+  duration = 0.08,
+  type = "sine",
+  volume = 0.035
+) {
+
+  const ctx = initAudio();
+
+  if (!ctx) {
+    return;
+  }
+
+  if (ctx.state === "suspended") {
+    ctx.resume().catch(() => {});
+  }
+
+
+  const oscillator =
+    ctx.createOscillator();
+
+  const gain =
+    ctx.createGain();
+
+
+  oscillator.type = type;
+
+  oscillator.frequency.value =
+    frequency;
+
+
+  gain.gain.setValueAtTime(
+    0,
+    ctx.currentTime
+  );
+
+  gain.gain.linearRampToValueAtTime(
+    volume,
+    ctx.currentTime + 0.01
+  );
+
+  gain.gain.exponentialRampToValueAtTime(
+    0.001,
+    ctx.currentTime + duration
+  );
+
+
+  oscillator.connect(gain);
+
+  gain.connect(ctx.destination);
+
+
+  oscillator.start();
+
+  oscillator.stop(
+    ctx.currentTime + duration + 0.02
+  );
+}
+
+
+function playListeningSound() {
+
+  playTone(
+    520,
+    0.08,
+    "sine",
+    0.04
+  );
+
+  setTimeout(() => {
+
+    playTone(
+      700,
+      0.1,
+      "sine",
+      0.035
+    );
+
+  }, 70);
+}
+
+
+function playThinkingSound() {
+
+  playTone(
+    420,
+    0.09,
+    "sine",
+    0.025
+  );
+}
+
+
+function playAnswerSound() {
+
+  playTone(
+    600,
+    0.08,
+    "sine",
+    0.035
+  );
+
+  setTimeout(() => {
+
+    playTone(
+      760,
+      0.12,
+      "sine",
+      0.03
+    );
+
+  }, 80);
+}
+
+
+function playErrorSound() {
+
+  playTone(
+    220,
+    0.16,
+    "triangle",
+    0.035
+  );
+}
+
+
+// ============================================================================
+// SPEECH SYNTHESIS
+// ============================================================================
 
 function cleanTextForSpeech(text) {
 
-  if (!text) {
-    return "";
-  }
+  if (!text) return "";
 
   return String(text)
 
-    // Remove markdown headings
-    .replace(/^#{1,6}\s+/gm, "")
+    .replace(
+      /^#{1,6}\s+/gm,
+      ""
+    )
 
-    // Remove bold
-    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(
+      /\*\*(.*?)\*\*/g,
+      "$1"
+    )
 
-    // Remove italic
-    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(
+      /\*([^*]+)\*/g,
+      "$1"
+    )
 
-    // Remove inline code
-    .replace(/`([^`]+)`/g, "$1")
+    .replace(
+      /`([^`]+)`/g,
+      "$1"
+    )
 
-    // Remove bullet markers
-    .replace(/^\s*[-*]\s+/gm, "")
+    .replace(
+      /^\s*[-*]\s+/gm,
+      ""
+    )
 
-    // Remove numbered-list markers
-    .replace(/^\s*\d+\.\s+/gm, "")
+    .replace(
+      /^\s*\d+\.\s+/gm,
+      ""
+    )
 
-    // Remove extra whitespace
-    .replace(/\n{3,}/g, "\n\n")
+    .replace(
+      /\n{3,}/g,
+      "\n\n"
+    )
 
     .trim();
 }
 
 
-function speakText(text) {
+function speakText(text, language = LANGUAGES.english) {
 
   if (!("speechSynthesis" in window)) {
-
-    alert(
-      "Text-to-speech is not supported by this browser."
-    );
-
     return;
   }
 
@@ -392,27 +859,75 @@ function speakText(text) {
     return;
   }
 
-  // Stop anything currently speaking.
+
   speechSynthesis.cancel();
+
 
   const cleanText =
     cleanTextForSpeech(text);
 
+
   const utterance =
-    new SpeechSynthesisUtterance(cleanText);
+    new SpeechSynthesisUtterance(
+      cleanText
+    );
 
-  utterance.lang = "en-US";
 
-  // Natural speaking speed.
-  utterance.rate = 0.95;
+  utterance.lang =
+    language.code;
 
-  // Normal pitch.
-  utterance.pitch = 1;
 
-  // Full volume.
-  utterance.volume = 1;
+  utterance.rate =
+    0.95;
 
-  speechSynthesis.speak(utterance);
+
+  utterance.pitch =
+    1;
+
+
+  utterance.volume =
+    1;
+
+
+  utterance.onstart = () => {
+
+    isSpeaking = true;
+
+    updateOrb(
+      "speaking",
+      `Speaking ${language.name}`
+    );
+
+  };
+
+
+  utterance.onend = () => {
+
+    isSpeaking = false;
+
+    updateOrb(
+      "idle",
+      "Tap the orb and speak"
+    );
+
+  };
+
+
+  utterance.onerror = () => {
+
+    isSpeaking = false;
+
+    updateOrb(
+      "idle",
+      "Tap the orb and speak"
+    );
+
+  };
+
+
+  speechSynthesis.speak(
+    utterance
+  );
 }
 
 
@@ -421,51 +936,184 @@ function stopSpeaking() {
   if ("speechSynthesis" in window) {
     speechSynthesis.cancel();
   }
+
+  isSpeaking = false;
+
+  updateOrb(
+    "idle",
+    "Tap the orb and speak"
+  );
 }
 
 
-/* ==========================================================================
-   VOICE -> TEXT
-   ========================================================================== */
+// ============================================================================
+// FLOATING VOICE ORB
+// ============================================================================
 
-function setupVoiceInput() {
+function createVoiceOrb() {
 
-  const voiceBtn =
-    document.getElementById("voiceBtn");
-
-  const askInput =
-    document.getElementById("askInput");
-
-  const voiceStatus =
-    document.getElementById("voiceStatus");
-
-
-  if (!voiceBtn || !askInput) {
+  if (document.getElementById("voiceOrb")) {
     return;
   }
 
+
+  const orb = document.createElement("button");
+
+  orb.id = "voiceOrb";
+
+  orb.className =
+    "voice-orb voice-orb-idle";
+
+  orb.type = "button";
+
+  orb.setAttribute(
+    "aria-label",
+    "Start talking"
+  );
+
+  orb.innerHTML = `
+    <span class="orb-core"></span>
+    <span class="orb-ring ring-one"></span>
+    <span class="orb-ring ring-two"></span>
+    <span class="orb-glow"></span>
+    <span class="orb-label">
+      Talk
+    </span>
+  `;
+
+
+  document.body.appendChild(orb);
+
+
+  orb.addEventListener(
+    "click",
+    () => {
+
+      initAudio();
+
+      if (isSpeaking) {
+        stopSpeaking();
+        return;
+      }
+
+      if (isListening) {
+        stopListening();
+        return;
+      }
+
+      startListening();
+    }
+  );
+
+
+  setupVoiceRecognition();
+
+
+  updateOrb(
+    "idle",
+    "Tap the orb and speak"
+  );
+}
+
+
+function updateOrb(
+  state,
+  statusText = ""
+) {
+
+  const orb =
+    document.getElementById(
+      "voiceOrb"
+    );
+
+  if (!orb) {
+    return;
+  }
+
+
+  orb.classList.remove(
+    "voice-orb-idle",
+    "voice-orb-listening",
+    "voice-orb-thinking",
+    "voice-orb-speaking",
+    "voice-orb-error"
+  );
+
+
+  orb.classList.add(
+    `voice-orb-${state}`
+  );
+
+
+  const label =
+    orb.querySelector(
+      ".orb-label"
+    );
+
+
+  if (label) {
+
+    if (state === "listening") {
+      label.textContent = "Listening";
+    }
+
+    else if (state === "thinking") {
+      label.textContent = "Thinking";
+    }
+
+    else if (state === "speaking") {
+      label.textContent = "Speaking";
+    }
+
+    else if (state === "error") {
+      label.textContent = "Try again";
+    }
+
+    else {
+      label.textContent = "Talk";
+    }
+
+  }
+
+
+  const status =
+    document.getElementById(
+      "voiceOrbStatus"
+    );
+
+
+  if (status) {
+    status.textContent =
+      statusText;
+  }
+}
+
+
+// ============================================================================
+// SPEECH RECOGNITION
+// ============================================================================
+
+function setupVoiceRecognition() {
 
   const SpeechRecognition =
     window.SpeechRecognition ||
     window.webkitSpeechRecognition;
 
 
-  // Browser doesn't support speech recognition.
   if (!SpeechRecognition) {
 
-    voiceBtn.disabled = true;
+    voiceSupported = false;
 
-    voiceBtn.title =
-      "Voice input is not supported by this browser";
-
-    if (voiceStatus) {
-
-      voiceStatus.textContent =
-        "Voice input is not supported by this browser.";
-    }
+    updateOrb(
+      "error",
+      "Voice input is not supported here"
+    );
 
     return;
   }
+
+
+  voiceSupported = true;
 
 
   speechRecognition =
@@ -475,11 +1123,14 @@ function setupVoiceInput() {
   speechRecognition.lang =
     "en-US";
 
+
   speechRecognition.continuous =
     false;
 
+
   speechRecognition.interimResults =
     false;
+
 
   speechRecognition.maxAlternatives =
     1;
@@ -489,22 +1140,15 @@ function setupVoiceInput() {
 
     isListening = true;
 
-    voiceBtn.classList.add(
-      "listening"
+    initAudio();
+
+    playListeningSound();
+
+
+    updateOrb(
+      "listening",
+      "Listening… speak naturally"
     );
-
-    voiceBtn.textContent =
-      "🔴";
-
-    voiceBtn.title =
-      "Stop listening";
-
-
-    if (voiceStatus) {
-
-      voiceStatus.textContent =
-        "Listening… speak your question.";
-    }
   };
 
 
@@ -512,22 +1156,50 @@ function setupVoiceInput() {
     event => {
 
       const transcript =
-        event.results[0][0].transcript;
+        event.results[0][0]
+          .transcript
+          .trim();
 
 
-      askInput.value =
-        transcript;
+      isListening = false;
 
 
-      if (voiceStatus) {
+      if (!transcript) {
 
-        voiceStatus.textContent =
-          "Question captured. Thinking…";
+        updateOrb(
+          "idle",
+          "I didn't catch that"
+        );
+
+        return;
       }
 
 
-      // Automatically send the question.
-      handleAsk();
+      const input =
+        document.getElementById(
+          "askInput"
+        );
+
+
+      if (input) {
+        input.value =
+          transcript;
+      }
+
+
+      updateOrb(
+        "thinking",
+        "I heard you. Thinking…"
+      );
+
+
+      playThinkingSound();
+
+
+      handleAsk(
+        transcript,
+        true
+      );
     };
 
 
@@ -543,37 +1215,69 @@ function setupVoiceInput() {
       isListening = false;
 
 
-      voiceBtn.classList.remove(
-        "listening"
+      if (
+        event.error === "not-allowed"
+      ) {
+
+        playErrorSound();
+
+        updateOrb(
+          "error",
+          "Microphone permission was denied"
+        );
+
+        setTimeout(() => {
+
+          updateOrb(
+            "idle",
+            "Tap the orb and speak"
+          );
+
+        }, 2500);
+
+        return;
+      }
+
+
+      if (
+        event.error === "no-speech"
+      ) {
+
+        updateOrb(
+          "idle",
+          "No speech detected"
+        );
+
+        setTimeout(() => {
+
+          updateOrb(
+            "idle",
+            "Tap the orb and speak"
+          );
+
+        }, 1800);
+
+        return;
+      }
+
+
+      playErrorSound();
+
+
+      updateOrb(
+        "error",
+        "Voice input failed"
       );
 
-      voiceBtn.textContent =
-        "🎙️";
 
-      voiceBtn.title =
-        "Speak your question";
+      setTimeout(() => {
 
+        updateOrb(
+          "idle",
+          "Tap the orb and speak"
+        );
 
-      if (voiceStatus) {
-
-        if (event.error === "not-allowed") {
-
-          voiceStatus.textContent =
-            "Microphone permission was denied.";
-
-        } else if (
-          event.error === "no-speech"
-        ) {
-
-          voiceStatus.textContent =
-            "We didn't hear anything. Try again.";
-
-        } else {
-
-          voiceStatus.textContent =
-            "Voice input failed. Please try again.";
-        }
-      }
+      }, 2000);
     };
 
 
@@ -582,50 +1286,147 @@ function setupVoiceInput() {
 
       isListening = false;
 
+      if (!isSpeaking) {
 
-      voiceBtn.classList.remove(
-        "listening"
-      );
+        const orb =
+          document.getElementById(
+            "voiceOrb"
+          );
 
-      voiceBtn.textContent =
-        "🎙️";
 
-      voiceBtn.title =
-        "Speak your question";
+        if (
+          orb &&
+          orb.classList.contains(
+            "voice-orb-listening"
+          )
+        ) {
+
+          updateOrb(
+            "idle",
+            "Tap the orb and speak"
+          );
+        }
+      }
     };
+}
 
 
-  voiceBtn.addEventListener(
-    "click",
-    () => {
+function startListening() {
 
-      if (isListening) {
+  if (!voiceSupported) {
 
-        speechRecognition.stop();
+    updateOrb(
+      "error",
+      "Voice input is not supported"
+    );
 
-        return;
-      }
+    return;
+  }
 
 
-      try {
+  if (isListening) {
+    return;
+  }
 
-        speechRecognition.start();
 
-      } catch (error) {
+  stopSpeaking();
 
-        console.error(
-          "Could not start speech recognition:",
-          error
-        );
-      }
-    }
+
+  initAudio();
+
+
+  try {
+
+    speechRecognition.lang =
+      currentVoiceLanguage;
+
+
+    speechRecognition.start();
+
+  }
+
+  catch (error) {
+
+    console.error(
+      "Could not start speech recognition:",
+      error
+    );
+
+  }
+}
+
+
+function stopListening() {
+
+  if (!speechRecognition) {
+    return;
+  }
+
+
+  if (!isListening) {
+    return;
+  }
+
+
+  try {
+    speechRecognition.stop();
+  }
+
+  catch (error) {
+    console.error(error);
+  }
+
+
+  isListening = false;
+
+
+  updateOrb(
+    "idle",
+    "Tap the orb and speak"
   );
 }
 
 
-/* ==========================================================================
-   STARTUP
-   ========================================================================== */
+// ============================================================================
+// LANGUAGE DISPLAY
+// ============================================================================
+
+function createVoiceStatus() {
+
+  if (
+    document.getElementById(
+      "voiceOrbStatus"
+    )
+  ) {
+    return;
+  }
+
+
+  const status =
+    document.createElement("div");
+
+
+  status.id =
+    "voiceOrbStatus";
+
+
+  status.className =
+    "voice-orb-status";
+
+
+  status.textContent =
+    "Tap the orb and speak";
+
+
+  document.body.appendChild(
+    status
+  );
+}
+
+
+// ============================================================================
+// BOOT
+// ============================================================================
 
 async function boot() {
 
@@ -644,14 +1445,20 @@ async function boot() {
       TOPICS =
         await API.topics();
 
+
       renderApp();
 
-    } else {
-
-      renderGate();
     }
 
-  } catch (error) {
+    else {
+
+      renderGate();
+
+    }
+
+  }
+
+  catch (error) {
 
     console.error(
       "Boot failed:",
@@ -664,17 +1471,20 @@ async function boot() {
         class="loading"
         style="padding:44px;"
       >
-        Unable to connect to the health assistant.
-        Please refresh the page and try again.
+        Unable to connect to the
+        health assistant.
+
+        Please refresh the page
+        and try again.
       </div>
     `;
   }
 }
 
 
-/* ==========================================================================
-   AUTH GATE
-   ========================================================================== */
+// ============================================================================
+// AUTH GATE
+// ============================================================================
 
 let gateMode = "login";
 
@@ -689,7 +1499,7 @@ function renderGate() {
         <img
           src="images/hero.jpg"
           alt=""
-        >
+        />
 
         <div class="gate-scrim"></div>
 
@@ -709,13 +1519,14 @@ function renderGate() {
         <div class="gate-tagline">
 
           <h2>
-            Health awareness, made simple.
+            Health awareness,
+            made simple.
           </h2>
 
           <p>
-            Practical, everyday guidance on hygiene,
-            nutrition, exercise, and more — right when
-            you need it.
+            Practical, everyday guidance
+            on hygiene, nutrition,
+            exercise, and more.
           </p>
 
         </div>
@@ -744,17 +1555,14 @@ function renderGate() {
 function renderGateBody() {
 
   const body =
-    document.getElementById("gateBody");
+    document.getElementById(
+      "gateBody"
+    );
 
-
-  /* ------------------------------------------------------------------------
-     FORGOT PASSWORD
-  ------------------------------------------------------------------------ */
 
   if (gateMode === "forgot") {
 
     body.innerHTML = `
-
       <button
         class="gate-back"
         id="gateBackBtn"
@@ -762,11 +1570,9 @@ function renderGateBody() {
         ← Back to log in
       </button>
 
-
       <h1 style="font-size:20px;">
         Forgot your password?
       </h1>
-
 
       <p
         class="lede"
@@ -775,10 +1581,9 @@ function renderGateBody() {
           margin-top:8px;
         "
       >
-        Enter the email you signed up with and
-        we'll send a reset link to it.
+        Enter the email you signed up
+        with and we'll send a reset link.
       </p>
-
 
       <div
         class="auth-card"
@@ -791,7 +1596,9 @@ function renderGateBody() {
 
         <form id="forgotForm">
 
-          <label for="forgotEmail">
+          <label
+            for="forgotEmail"
+          >
             Email
           </label>
 
@@ -802,7 +1609,6 @@ function renderGateBody() {
             required
           />
 
-
           <button
             type="submit"
             class="submit-btn"
@@ -810,12 +1616,10 @@ function renderGateBody() {
             Send reset link
           </button>
 
-
           <div
             class="error-msg"
             id="forgotError"
           ></div>
-
 
           <div
             class="success-msg"
@@ -829,21 +1633,25 @@ function renderGateBody() {
 
 
     document
-      .getElementById("gateBackBtn")
+      .getElementById(
+        "gateBackBtn"
+      )
       .addEventListener(
         "click",
         () => {
 
-          gateMode =
-            "login";
+          gateMode = "login";
 
           renderGateBody();
+
         }
       );
 
 
     document
-      .getElementById("forgotForm")
+      .getElementById(
+        "forgotForm"
+      )
       .addEventListener(
         "submit",
         async e => {
@@ -863,18 +1671,15 @@ function renderGateBody() {
             );
 
 
-          errorBox.textContent =
-            "";
+          errorBox.textContent = "";
 
-          successBox.textContent =
-            "";
+          successBox.textContent = "";
 
 
           const email =
-            document
-              .getElementById(
-                "forgotEmail"
-              )
+            document.getElementById(
+              "forgotEmail"
+            )
               .value
               .trim();
 
@@ -898,6 +1703,7 @@ function renderGateBody() {
           successBox.textContent =
             result.data.message ||
             "If that email is registered, a reset link has been sent.";
+
         }
       );
 
@@ -905,10 +1711,6 @@ function renderGateBody() {
     return;
   }
 
-
-  /* ------------------------------------------------------------------------
-     LOGIN / SIGNUP
-  ------------------------------------------------------------------------ */
 
   const isLogin =
     gateMode === "login";
@@ -919,19 +1721,16 @@ function renderGateBody() {
     <div class="gate-tabs">
 
       <button
-        class="gate-tab ${
-          isLogin ? "active" : ""
-        }"
+        class="gate-tab
+        ${isLogin ? "active" : ""}"
         id="tabLogin"
       >
         Log in
       </button>
 
-
       <button
-        class="gate-tab ${
-          !isLogin ? "active" : ""
-        }"
+        class="gate-tab
+        ${!isLogin ? "active" : ""}"
         id="tabSignup"
       >
         Sign up
@@ -965,7 +1764,9 @@ function renderGateBody() {
 
       <form id="gateForm">
 
-        <label for="gateUsername">
+        <label
+          for="gateUsername"
+        >
           Username
         </label>
 
@@ -981,7 +1782,9 @@ function renderGateBody() {
           isLogin
             ? ""
             : `
-              <label for="gateEmail">
+              <label
+                for="gateEmail"
+              >
                 Email
               </label>
 
@@ -995,7 +1798,9 @@ function renderGateBody() {
         }
 
 
-        <label for="gatePassword">
+        <label
+          for="gatePassword"
+        >
           Password
         </label>
 
@@ -1054,10 +1859,10 @@ function renderGateBody() {
       "click",
       () => {
 
-        gateMode =
-          "login";
+        gateMode = "login";
 
         renderGateBody();
+
       }
     );
 
@@ -1068,10 +1873,10 @@ function renderGateBody() {
       "click",
       () => {
 
-        gateMode =
-          "signup";
+        gateMode = "signup";
 
         renderGateBody();
+
       }
     );
 
@@ -1079,22 +1884,26 @@ function renderGateBody() {
   if (isLogin) {
 
     document
-      .getElementById("forgotLinkBtn")
+      .getElementById(
+        "forgotLinkBtn"
+      )
       .addEventListener(
         "click",
         () => {
 
-          gateMode =
-            "forgot";
+          gateMode = "forgot";
 
           renderGateBody();
+
         }
       );
   }
 
 
   document
-    .getElementById("gateForm")
+    .getElementById(
+      "gateForm"
+    )
     .addEventListener(
       "submit",
       async e => {
@@ -1108,24 +1917,21 @@ function renderGateBody() {
           );
 
 
-        errorBox.textContent =
-          "";
+        errorBox.textContent = "";
 
 
         const username =
-          document
-            .getElementById(
-              "gateUsername"
-            )
+          document.getElementById(
+            "gateUsername"
+          )
             .value
             .trim();
 
 
         const password =
-          document
-            .getElementById(
-              "gatePassword"
-            )
+          document.getElementById(
+            "gatePassword"
+          )
             .value;
 
 
@@ -1140,13 +1946,14 @@ function renderGateBody() {
               password
             );
 
-        } else {
+        }
+
+        else {
 
           const email =
-            document
-              .getElementById(
-                "gateEmail"
-              )
+            document.getElementById(
+              "gateEmail"
+            )
               .value
               .trim();
 
@@ -1179,14 +1986,15 @@ function renderGateBody() {
 
 
         renderApp();
+
       }
     );
 }
 
 
-/* ==========================================================================
-   MAIN APP
-   ========================================================================== */
+// ============================================================================
+// MAIN APP
+// ============================================================================
 
 function renderApp() {
 
@@ -1213,9 +2021,7 @@ function renderApp() {
 
         </div>
 
-
         <nav id="nav"></nav>
-
 
         <div
           class="account-box"
@@ -1242,17 +2048,24 @@ function renderApp() {
   renderAccountBox();
 
   goTo("home");
+
+
+  // Voice UI exists globally,
+  // but only becomes active when
+  // the user reaches the Ask page.
+
+  createVoiceOrb();
+
+  createVoiceStatus();
 }
 
-
-/* ==========================================================================
-   NAVIGATION
-   ========================================================================== */
 
 function renderNav() {
 
   const nav =
-    document.getElementById("nav");
+    document.getElementById(
+      "nav"
+    );
 
 
   const items = [
@@ -1274,6 +2087,7 @@ function renderNav() {
       icon: "💬",
       name: "Ask"
     }
+
   ];
 
 
@@ -1282,7 +2096,8 @@ function renderNav() {
       .map(it => `
 
         <button
-          class="nav-btn ${
+          class="nav-btn
+          ${
             it.id === current
               ? "active"
               : ""
@@ -1292,7 +2107,9 @@ function renderNav() {
 
           <span class="dot"></span>
 
-          ${escapeHtml(it.name)}
+          ${escapeHtml(
+            it.name
+          )}
 
         </button>
 
@@ -1301,21 +2118,22 @@ function renderNav() {
 
 
   nav
-    .querySelectorAll(".nav-btn")
+    .querySelectorAll(
+      ".nav-btn"
+    )
     .forEach(btn => {
 
       btn.addEventListener(
         "click",
-        () => goTo(btn.dataset.goto)
+        () =>
+          goTo(
+            btn.dataset.goto
+          )
       );
 
     });
 }
 
-
-/* ==========================================================================
-   ACCOUNT BOX
-   ========================================================================== */
 
 function renderAccountBox() {
 
@@ -1328,14 +2146,16 @@ function renderAccountBox() {
   box.innerHTML = `
 
     <div class="who">
-      👤 ${escapeHtml(USER.username)}
+      👤
+      ${escapeHtml(
+        USER.username
+      )}
     </div>
-
 
     <div class="foot-note">
-      Your questions are saved to your account.
+      Your questions are saved
+      to your account.
     </div>
-
 
     <button
       class="link"
@@ -1343,7 +2163,6 @@ function renderAccountBox() {
     >
       Account
     </button>
-
 
     <button
       class="link"
@@ -1374,33 +2193,49 @@ function renderAccountBox() {
 
         stopSpeaking();
 
-        if (speechRecognition) {
-
-          try {
-            speechRecognition.stop();
-          } catch (e) {}
-        }
+        stopListening();
 
 
         await API.logout();
 
 
-        USER =
-          null;
+        USER = null;
 
-        gateMode =
-          "login";
+        gateMode = "login";
+
+
+        const orb =
+          document.getElementById(
+            "voiceOrb"
+          );
+
+
+        if (orb) {
+          orb.remove();
+        }
+
+
+        const status =
+          document.getElementById(
+            "voiceOrbStatus"
+          );
+
+
+        if (status) {
+          status.remove();
+        }
 
 
         renderGate();
+
       }
     );
 }
 
 
-/* ==========================================================================
-   HOME PAGE
-   ========================================================================== */
+// ============================================================================
+// HOME
+// ============================================================================
 
 function homeHTML() {
 
@@ -1422,11 +2257,13 @@ function homeHTML() {
 
 
         <p class="lede">
-          A small digital tool covering everyday health
-          topics and questions — hygiene, nutrition,
-          exercise, common illnesses, disease prevention,
-          and a lot in between — built to make health
-          awareness easier to access and understand.
+
+          A small digital tool covering
+          everyday health topics and
+          questions — hygiene, nutrition,
+          exercise, common illnesses,
+          disease prevention, and more.
+
         </p>
 
 
@@ -1437,12 +2274,10 @@ function homeHTML() {
             health topics
           </div>
 
-
           <div class="pill">
             <b>30+</b>
             specific questions answered
           </div>
-
 
           <div class="pill">
             <b>1</b>
@@ -1472,11 +2307,9 @@ function homeHTML() {
               ${t.icon}
             </div>
 
-
             <h3>
               ${escapeHtml(t.name)}
             </h3>
-
 
             <p>
               ${escapeHtml(t.short)}
@@ -1489,13 +2322,14 @@ function homeHTML() {
       </div>
 
     </section>
+
   `;
 }
 
 
-/* ==========================================================================
-   TOPIC PAGE
-   ========================================================================== */
+// ============================================================================
+// TOPIC
+// ============================================================================
 
 async function topicHTML(id) {
 
@@ -1519,7 +2353,6 @@ async function topicHTML(id) {
           <h1>
             ${escapeHtml(t.name)}
           </h1>
-
 
           <p>
             ${escapeHtml(t.intro)}
@@ -1554,7 +2387,6 @@ async function topicHTML(id) {
           DID YOU KNOW
         </div>
 
-
         <p>
           ${escapeHtml(t.fact)}
         </p>
@@ -1562,13 +2394,14 @@ async function topicHTML(id) {
       </div>
 
     </section>
+
   `;
 }
 
 
-/* ==========================================================================
-   ASK PAGE
-   ========================================================================== */
+// ============================================================================
+// ASK PAGE
+// ============================================================================
 
 async function askHTML() {
 
@@ -1595,6 +2428,7 @@ async function askHTML() {
           <li>
 
             <b>
+
               ${
                 h.topic
                   ? escapeHtml(
@@ -1604,17 +2438,21 @@ async function askHTML() {
                     )
                   : "No match"
               }
+
             </b>
 
             —
 
-            ${escapeHtml(h.question)}
+            ${escapeHtml(
+              h.question
+            )}
 
           </li>
 
         `).join("")}
 
       </ul>
+
     `;
   }
 
@@ -1637,10 +2475,15 @@ async function askHTML() {
         class="lede"
         style="margin-top:10px;"
       >
-        Ask anything concerning health — a symptom,
-        a habit, first aid, or general wellbeing —
-        in your own words. Your questions are saved
-        to your account.
+
+        Type your question or use
+        the floating orb to talk.
+
+        English is the default, but
+        we can also answer in
+        Luganda, Filipino, French,
+        Spanish, or German.
+
       </p>
 
 
@@ -1651,20 +2494,9 @@ async function askHTML() {
           <input
             id="askInput"
             type="text"
-            placeholder="e.g. what should I do for a headache?"
+            placeholder="Type your health question..."
             autocomplete="off"
           />
-
-
-          <button
-            id="voiceBtn"
-            type="button"
-            title="Speak your question"
-            aria-label="Speak your question"
-          >
-            🎙️
-          </button>
-
 
           <button
             id="askBtn"
@@ -1677,10 +2509,10 @@ async function askHTML() {
 
 
         <div
-          class="voice-status"
-          id="voiceStatus"
-          aria-live="polite"
-        ></div>
+          class="language-detected"
+          id="languageDetected"
+        >
+        </div>
 
 
         <div class="suggest-row">
@@ -1739,19 +2571,26 @@ async function askHTML() {
 
 
       <div class="disclaimer">
-        This assistant gives general health information only.
-        For diagnosis or treatment of any medical concern,
-        please consult a qualified health professional.
+
+        This assistant gives general
+        health information only.
+
+        For diagnosis or treatment
+        of any medical concern,
+        please consult a qualified
+        health professional.
+
       </div>
 
     </section>
+
   `;
 }
 
 
-/* ==========================================================================
-   ACCOUNT PAGE
-   ========================================================================== */
+// ============================================================================
+// ACCOUNT
+// ============================================================================
 
 function accountHTML() {
 
@@ -1765,7 +2604,10 @@ function accountHTML() {
 
 
       <h1>
-        Hi, ${escapeHtml(USER.username)}.
+        Hi,
+        ${escapeHtml(
+          USER.username
+        )}.
       </h1>
 
 
@@ -1773,10 +2615,15 @@ function accountHTML() {
         class="lede"
         style="margin-top:10px;"
       >
+
         You're logged in as
-        ${escapeHtml(USER.email)}.
-        Your question history is saved automatically —
-        visit the Ask page to see it.
+        ${escapeHtml(
+          USER.email
+        )}.
+
+        Your question history is
+        saved automatically.
+
       </p>
 
 
@@ -1789,7 +2636,9 @@ function accountHTML() {
 
         <form id="pwForm">
 
-          <label for="currentPw">
+          <label
+            for="currentPw"
+          >
             Current password
           </label>
 
@@ -1802,7 +2651,9 @@ function accountHTML() {
           />
 
 
-          <label for="newPw">
+          <label
+            for="newPw"
+          >
             New password
           </label>
 
@@ -1815,7 +2666,9 @@ function accountHTML() {
           />
 
 
-          <label for="confirmPw">
+          <label
+            for="confirmPw"
+          >
             Confirm new password
           </label>
 
@@ -1852,13 +2705,10 @@ function accountHTML() {
       </div>
 
     </section>
+
   `;
 }
 
-
-/* ==========================================================================
-   ACCOUNT PAGE LOGIC
-   ========================================================================== */
 
 function wireAccountPage() {
 
@@ -1887,11 +2737,9 @@ function wireAccountPage() {
       e.preventDefault();
 
 
-      pwError.textContent =
-        "";
+      pwError.textContent = "";
 
-      pwSuccess.textContent =
-        "";
+      pwSuccess.textContent = "";
 
 
       const current_password =
@@ -1946,22 +2794,22 @@ function wireAccountPage() {
 
 
       pwForm.reset();
+
     }
   );
 }
 
 
-/* ==========================================================================
-   PAGE ROUTING
-   ========================================================================== */
+// ============================================================================
+// NAVIGATION
+// ============================================================================
 
 async function goTo(id) {
 
   stopSpeaking();
 
 
-  current =
-    id;
+  current = id;
 
 
   renderNav();
@@ -1978,7 +2826,10 @@ async function goTo(id) {
     main.innerHTML =
       homeHTML();
 
-  } else if (id === "ask") {
+  }
+
+
+  else if (id === "ask") {
 
     main.innerHTML =
       '<div class="loading">Loading…</div>';
@@ -1987,8 +2838,10 @@ async function goTo(id) {
     main.innerHTML =
       await askHTML();
 
+  }
 
-  } else if (id === "account") {
+
+  else if (id === "account") {
 
     main.innerHTML =
       accountHTML();
@@ -1996,8 +2849,10 @@ async function goTo(id) {
 
     wireAccountPage();
 
+  }
 
-  } else {
+
+  else {
 
     main.innerHTML =
       '<div class="loading">Loading…</div>';
@@ -2008,27 +2863,22 @@ async function goTo(id) {
   }
 
 
-  /* ------------------------------------------------------------------------
-     Navigation buttons
-  ------------------------------------------------------------------------ */
-
   main
-    .querySelectorAll("[data-goto]")
+    .querySelectorAll(
+      "[data-goto]"
+    )
     .forEach(el => {
 
       el.addEventListener(
         "click",
-        () => goTo(
-          el.dataset.goto
-        )
+        () =>
+          goTo(
+            el.dataset.goto
+          )
       );
 
     });
 
-
-  /* ------------------------------------------------------------------------
-     ASK PAGE
-  ------------------------------------------------------------------------ */
 
   if (id === "ask") {
 
@@ -2048,8 +2898,10 @@ async function goTo(id) {
 
       askBtn.addEventListener(
         "click",
-        handleAsk
+        () =>
+          handleAsk()
       );
+
     }
 
 
@@ -2064,10 +2916,12 @@ async function goTo(id) {
             e.preventDefault();
 
             handleAsk();
+
           }
 
         }
       );
+
     }
 
 
@@ -2097,14 +2951,17 @@ async function goTo(id) {
 
 
             handleAsk();
+
           }
         );
 
       });
 
 
-    // Activate microphone.
-    setupVoiceInput();
+    updateOrb(
+      "idle",
+      "Tap the orb and speak"
+    );
   }
 
 
@@ -2115,59 +2972,14 @@ async function goTo(id) {
 }
 
 
-/* ==========================================================================
-   ANSWER VOICE BUTTONS
-   ========================================================================== */
+// ============================================================================
+// ASK
+// ============================================================================
 
-function addVoiceControls(box, answer) {
-
-  const actions =
-    box.querySelector(
-      ".answer-actions"
-    );
-
-
-  if (!actions) {
-    return;
-  }
-
-
-  const speakBtn =
-    actions.querySelector(
-      ".voice-speak"
-    );
-
-
-  const stopBtn =
-    actions.querySelector(
-      ".voice-stop"
-    );
-
-
-  if (speakBtn) {
-
-    speakBtn.addEventListener(
-      "click",
-      () => speakText(answer)
-    );
-  }
-
-
-  if (stopBtn) {
-
-    stopBtn.addEventListener(
-      "click",
-      () => stopSpeaking()
-    );
-  }
-}
-
-
-/* ==========================================================================
-   ASK / AI
-   ========================================================================== */
-
-async function handleAsk() {
+async function handleAsk(
+  providedText = null,
+  fromVoice = false
+) {
 
   const input =
     document.getElementById(
@@ -2187,7 +2999,11 @@ async function handleAsk() {
 
 
   const val =
-    input.value.trim();
+    String(
+      providedText !== null
+        ? providedText
+        : input.value
+    ).trim();
 
 
   if (!val) {
@@ -2195,11 +3011,45 @@ async function handleAsk() {
   }
 
 
-  // Stop previous speech.
   stopSpeaking();
 
 
-  // Thinking state.
+  const language =
+    detectLanguage(val);
+
+
+  currentVoiceLanguage =
+    language.code;
+
+
+  if (
+    speechRecognition
+  ) {
+    speechRecognition.lang =
+      language.code;
+  }
+
+
+  const languageIndicator =
+    document.getElementById(
+      "languageDetected"
+    );
+
+
+  if (languageIndicator) {
+
+    languageIndicator.textContent =
+      `Language: ${language.name}`;
+
+  }
+
+
+  updateOrb(
+    "thinking",
+    `Thinking in ${language.name}…`
+  );
+
+
   box.innerHTML = `
 
     <div class="loading">
@@ -2217,17 +3067,19 @@ async function handleAsk() {
   try {
 
     const result =
-      await API.ask(val);
+      await API.ask(
+        val
+      );
 
-
-    /* ----------------------------------------------------------------------
-       NO MATCH
-    ---------------------------------------------------------------------- */
 
     if (!result.matched) {
 
       const answer =
-        "Try rephrasing your question, or browse a topic directly using the menu on the left. Available topics include hygiene, nutrition, exercise, common illnesses, and disease prevention.";
+        language.name === "English"
+
+          ? "Try rephrasing your question, or browse a topic directly using the menu on the left."
+
+          : "I couldn't find a direct answer to that question. Try asking it another way or browse a health topic.";
 
 
       box.innerHTML = `
@@ -2240,49 +3092,26 @@ async function handleAsk() {
         <div class="answer-text">
 
           <p>
-            Try rephrasing your question, or browse
-            a topic directly using the menu on the left.
+            ${escapeHtml(answer)}
           </p>
-
-
-          <p>
-            Available topics include
-            <strong>hygiene</strong>,
-            <strong>nutrition</strong>,
-            <strong>exercise</strong>,
-            <strong>common illnesses</strong>,
-            and
-            <strong>disease prevention</strong>.
-          </p>
-
-        </div>
-
-
-        <div class="answer-actions">
-
-          <button
-            class="voice-action voice-speak"
-            type="button"
-          >
-            🔊 Read aloud
-          </button>
-
-
-          <button
-            class="voice-action voice-stop"
-            type="button"
-          >
-            ⏹ Stop
-          </button>
 
         </div>
 
       `;
 
 
-      addVoiceControls(
-        box,
-        answer
+      playAnswerSound();
+
+
+      updateOrb(
+        "speaking",
+        `Answering in ${language.name}`
+      );
+
+
+      speakText(
+        answer,
+        language
       );
 
 
@@ -2290,50 +3119,33 @@ async function handleAsk() {
     }
 
 
-    /* ----------------------------------------------------------------------
-       LOCAL FAQ
-    ---------------------------------------------------------------------- */
-
     if (result.kind === "faq") {
 
       box.innerHTML = `
 
         <div class="from">
+
           ${result.topic.icon}
+
           ${escapeHtml(
             result.topic.name
           )}
+
         </div>
 
 
         <div class="answer-text">
+
           ${renderMarkdown(
             result.answer
           )}
-        </div>
-
-
-        <div class="answer-actions">
-
-          <button
-            class="voice-action voice-speak"
-            type="button"
-          >
-            🔊 Read aloud
-          </button>
-
-
-          <button
-            class="voice-action voice-stop"
-            type="button"
-          >
-            ⏹ Stop
-          </button>
 
         </div>
 
 
-        <div style="margin-top:20px;">
+        <div
+          style="margin-top:20px;"
+        >
 
           <button
             class="suggest-chip"
@@ -2341,22 +3153,19 @@ async function handleAsk() {
               result.topic.id
             )}"
           >
+
             More on
             ${escapeHtml(
-              result.topic.name.toLowerCase()
+              result.topic.name
+                .toLowerCase()
             )}
             →
+
           </button>
 
         </div>
 
       `;
-
-
-      addVoiceControls(
-        box,
-        result.answer
-      );
 
 
       const moreButton =
@@ -2369,20 +3178,27 @@ async function handleAsk() {
 
         moreButton.addEventListener(
           "click",
-          () => goTo(
-            result.topic.id
-          )
+          () =>
+            goTo(
+              result.topic.id
+            )
         );
+
       }
+
+
+      playAnswerSound();
+
+
+      speakText(
+        result.answer,
+        language
+      );
 
 
       return;
     }
 
-
-    /* ----------------------------------------------------------------------
-       HUGGING FACE AI
-    ---------------------------------------------------------------------- */
 
     if (result.kind === "ai") {
 
@@ -2394,47 +3210,28 @@ async function handleAsk() {
 
 
         <div class="answer-text">
+
           ${renderMarkdown(
             result.answer
           )}
-        </div>
-
-
-        <div class="answer-actions">
-
-          <button
-            class="voice-action voice-speak"
-            type="button"
-          >
-            🔊 Read aloud
-          </button>
-
-
-          <button
-            class="voice-action voice-stop"
-            type="button"
-          >
-            ⏹ Stop
-          </button>
 
         </div>
 
       `;
 
 
-      addVoiceControls(
-        box,
-        result.answer
+      playAnswerSound();
+
+
+      speakText(
+        result.answer,
+        language
       );
 
 
       return;
     }
 
-
-    /* ----------------------------------------------------------------------
-       LOCAL TOPIC FALLBACK
-    ---------------------------------------------------------------------- */
 
     const fallbackText =
       result.tips.join(". ");
@@ -2443,10 +3240,13 @@ async function handleAsk() {
     box.innerHTML = `
 
       <div class="from">
+
         ${result.topic.icon}
+
         ${escapeHtml(
           result.topic.name
         )}
+
       </div>
 
 
@@ -2459,40 +3259,24 @@ async function handleAsk() {
 
         <ul>
 
-          ${result.tips.map(tip => `
+          ${result.tips.map(
+            tip => `
 
-            <li>
-              ${escapeHtml(tip)}
-            </li>
+              <li>
+                ${escapeHtml(tip)}
+              </li>
 
-          `).join("")}
+            `
+          ).join("")}
 
         </ul>
 
       </div>
 
 
-      <div class="answer-actions">
-
-        <button
-          class="voice-action voice-speak"
-          type="button"
-        >
-          🔊 Read aloud
-        </button>
-
-
-        <button
-          class="voice-action voice-stop"
-          type="button"
-        >
-          ⏹ Stop
-        </button>
-
-      </div>
-
-
-      <div style="margin-top:20px;">
+      <div
+        style="margin-top:20px;"
+      >
 
         <button
           class="suggest-chip"
@@ -2500,22 +3284,19 @@ async function handleAsk() {
             result.topic.id
           )}"
         >
+
           See all
           ${escapeHtml(
-            result.topic.name.toLowerCase()
+            result.topic.name
+              .toLowerCase()
           )}
           tips →
+
         </button>
 
       </div>
 
     `;
-
-
-    addVoiceControls(
-      box,
-      fallbackText
-    );
 
 
     const moreButton =
@@ -2528,18 +3309,40 @@ async function handleAsk() {
 
       moreButton.addEventListener(
         "click",
-        () => goTo(
-          result.topic.id
-        )
+        () =>
+          goTo(
+            result.topic.id
+          )
       );
+
     }
 
 
-  } catch (error) {
+    playAnswerSound();
+
+
+    speakText(
+      fallbackText,
+      language
+    );
+
+  }
+
+
+  catch (error) {
 
     console.error(
       "Ask request failed:",
       error
+    );
+
+
+    playErrorSound();
+
+
+    updateOrb(
+      "error",
+      "I couldn't reach the assistant"
     );
 
 
@@ -2553,24 +3356,34 @@ async function handleAsk() {
       <div class="answer-text">
 
         <p>
-          We couldn't reach the health assistant
-          right now.
+          We couldn't reach the
+          health assistant right now.
         </p>
 
-
         <p>
-          Please check the connection and try again.
+          Please check the connection
+          and try again.
         </p>
 
       </div>
 
     `;
+
+
+    setTimeout(() => {
+
+      updateOrb(
+        "idle",
+        "Tap the orb and speak"
+      );
+
+    }, 2500);
   }
 }
 
 
-/* ==========================================================================
-   START APPLICATION
-   ========================================================================== */
+// ============================================================================
+// START
+// ============================================================================
 
 boot();
