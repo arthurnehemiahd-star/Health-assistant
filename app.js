@@ -946,147 +946,423 @@ function stopSpeaking() {
 }
 
 
+```js
 // ============================================================================
-// FLOATING VOICE ORB
+// FLOATING AI VOICE WAVE
 // ============================================================================
 
-function createVoiceOrb() {
+let voiceWaveAutoStartTimer = null;
 
-  if (document.getElementById("voiceOrb")) {
-    return;
-  }
-
-
-  const orb = document.createElement("button");
-
-  orb.id = "voiceOrb";
-
-  orb.className =
-    "voice-orb voice-orb-idle";
-
-  orb.type = "button";
-
-  orb.setAttribute(
-    "aria-label",
-    "Start talking"
-  );
-
-  orb.innerHTML = `
-    <span class="orb-core"></span>
-    <span class="orb-ring ring-one"></span>
-    <span class="orb-ring ring-two"></span>
-    <span class="orb-glow"></span>
-    <span class="orb-label">
-      Talk
-    </span>
-  `;
-
-
-  document.body.appendChild(orb);
-
-
-  orb.addEventListener(
-    "click",
-    () => {
-
-      initAudio();
-
-      if (isSpeaking) {
-        stopSpeaking();
+/**
+ * Create the floating voice-wave interface.
+ *
+ * This replaces the old circular voice orb with a floating,
+ * sound-reactive wave panel.
+ */
+function createVoiceWave() {
+    if (document.getElementById("voiceWave")) {
         return;
-      }
-
-      if (isListening) {
-        stopListening();
-        return;
-      }
-
-      startListening();
-    }
-  );
-
-
-  setupVoiceRecognition();
-
-
-  updateOrb(
-    "idle",
-    "Tap the orb and speak"
-  );
-}
-
-
-function updateOrb(
-  state,
-  statusText = ""
-) {
-
-  const orb =
-    document.getElementById(
-      "voiceOrb"
-    );
-
-  if (!orb) {
-    return;
-  }
-
-
-  orb.classList.remove(
-    "voice-orb-idle",
-    "voice-orb-listening",
-    "voice-orb-thinking",
-    "voice-orb-speaking",
-    "voice-orb-error"
-  );
-
-
-  orb.classList.add(
-    `voice-orb-${state}`
-  );
-
-
-  const label =
-    orb.querySelector(
-      ".orb-label"
-    );
-
-
-  if (label) {
-
-    if (state === "listening") {
-      label.textContent = "Listening";
     }
 
-    else if (state === "thinking") {
-      label.textContent = "Thinking";
-    }
+    const style = document.createElement("style");
 
-    else if (state === "speaking") {
-      label.textContent = "Speaking";
-    }
+    style.id = "voice-wave-styles";
 
-    else if (state === "error") {
-      label.textContent = "Try again";
-    }
+    style.textContent = `
+        /* ================================================================
+           FLOATING AI VOICE WAVE
+           ================================================================ */
 
-    else {
-      label.textContent = "Talk";
-    }
+        #voiceWave {
+            position: fixed;
+            right: 24px;
+            bottom: 24px;
 
-  }
+            width: 190px;
+            height: 76px;
 
+            display: flex;
+            align-items: center;
+            justify-content: center;
 
-  const status =
-    document.getElementById(
-      "voiceOrbStatus"
-    );
+            padding: 0 18px;
 
+            border-radius: 24px;
 
-  if (status) {
-    status.textContent =
-      statusText;
-  }
-}
+            background:
+                linear-gradient(
+                    135deg,
+                    rgba(18, 59, 54, 0.92),
+                    rgba(32, 96, 87, 0.88)
+                );
+
+            border: 1px solid rgba(255, 255, 255, 0.14);
+
+            box-shadow:
+                0 14px 40px rgba(0, 0, 0, 0.25),
+                0 0 30px rgba(83, 180, 161, 0.14);
+
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+
+            z-index: 9999;
+
+            overflow: hidden;
+
+            transition:
+                width 0.35s ease,
+                height 0.35s ease,
+                transform 0.35s ease,
+                box-shadow 0.35s ease,
+                opacity 0.35s ease;
+
+            user-select: none;
+        }
+
+        #voiceWave::before {
+            content: "";
+
+            position: absolute;
+
+            width: 170px;
+            height: 170px;
+
+            border-radius: 50%;
+
+            background:
+                radial-gradient(
+                    circle,
+                    rgba(104, 211, 184, 0.16),
+                    transparent 68%
+                );
+
+            animation: voiceWaveHalo 4s ease-in-out infinite;
+
+            pointer-events: none;
+        }
+
+        #voiceWave:hover {
+            transform: translateY(-3px);
+
+            box-shadow:
+                0 18px 45px rgba(0, 0, 0, 0.28),
+                0 0 38px rgba(83, 180, 161, 0.2);
+        }
+
+        /* Wave container */
+
+        .voice-wave-bars {
+            position: relative;
+
+            width: 128px;
+            height: 48px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            gap: 4px;
+
+            z-index: 2;
+        }
+
+        /* Individual audio bars */
+
+        .voice-wave-bar {
+            width: 5px;
+            height: 10px;
+
+            border-radius: 999px;
+
+            background: rgba(214, 255, 247, 0.92);
+
+            transform-origin: center;
+
+            opacity: 0.72;
+
+            transition:
+                height 0.12s ease,
+                opacity 0.2s ease,
+                transform 0.12s ease;
+
+            animation:
+                voiceWaveIdle 2.4s ease-in-out infinite;
+        }
+
+        .voice-wave-bar:nth-child(1) {
+            animation-delay: -0.20s;
+        }
+
+        .voice-wave-bar:nth-child(2) {
+            animation-delay: -0.35s;
+        }
+
+        .voice-wave-bar:nth-child(3) {
+            animation-delay: -0.50s;
+        }
+
+        .voice-wave-bar:nth-child(4) {
+            animation-delay: -0.65s;
+        }
+
+        .voice-wave-bar:nth-child(5) {
+            animation-delay: -0.80s;
+        }
+
+        .voice-wave-bar:nth-child(6) {
+            animation-delay: -0.95s;
+        }
+
+        .voice-wave-bar:nth-child(7) {
+            animation-delay: -1.10s;
+        }
+
+        .voice-wave-bar:nth-child(8) {
+            animation-delay: -0.95s;
+        }
+
+        .voice-wave-bar:nth-child(9) {
+            animation-delay: -0.80s;
+        }
+
+        .voice-wave-bar:nth-child(10) {
+            animation-delay: -0.65s;
+        }
+
+        .voice-wave-bar:nth-child(11) {
+            animation-delay: -0.50s;
+        }
+
+        .voice-wave-bar:nth-child(12) {
+            animation-delay: -0.35s;
+        }
+
+        .voice-wave-bar:nth-child(13) {
+            animation-delay: -0.20s;
+        }
+
+        /* ================================================================
+           STATES
+           ================================================================ */
+
+        #voiceWave.listening {
+            box-shadow:
+                0 18px 45px rgba(0, 0, 0, 0.28),
+                0 0 42px rgba(87, 210, 181, 0.35);
+        }
+
+        #voiceWave.listening .voice-wave-bar {
+            animation:
+                voiceWaveListening 0.75s ease-in-out infinite;
+            opacity: 1;
+        }
+
+        #voiceWave.thinking {
+            box-shadow:
+                0 18px 45px rgba(0, 0, 0, 0.28),
+                0 0 42px rgba(130, 195, 255, 0.25);
+        }
+
+        #voiceWave.thinking .voice-wave-bar {
+            animation:
+                voiceWaveThinking 1.15s ease-in-out infinite;
+        }
+
+        #voiceWave.speaking {
+            box-shadow:
+                0 18px 45px rgba(0, 0, 0, 0.28),
+                0 0 46px rgba(100, 225, 200, 0.38);
+        }
+
+        #voiceWave.speaking .voice-wave-bar {
+            animation:
+                voiceWaveSpeaking 0.55s ease-in-out infinite;
+            opacity: 1;
+        }
+
+        #voiceWave.error {
+            animation: voiceWaveError 0.45s ease;
+        }
+
+        /* ================================================================
+           LABEL
+           ================================================================ */
+
+        .voice-wave-label {
+            position: absolute;
+
+            left: 0;
+            right: 0;
+            bottom: 7px;
+
+            text-align: center;
+
+            font-family:
+                "IBM Plex Sans",
+                system-ui,
+                sans-serif;
+
+            font-size: 10px;
+            font-weight: 600;
+
+            letter-spacing: 0.08em;
+
+            text-transform: uppercase;
+
+            color: rgba(235, 255, 250, 0.72);
+
+            z-index: 3;
+
+            pointer-events: none;
+
+            transition:
+                opacity 0.2s ease;
+        }
+
+        /* ================================================================
+           ANIMATIONS
+           ================================================================ */
+
+        @keyframes voiceWaveIdle {
+            0%,
+            100% {
+                height: 8px;
+                transform: scaleY(0.8);
+            }
+
+            50% {
+                height: 17px;
+                transform: scaleY(1);
+            }
+        }
+
+        @keyframes voiceWaveListening {
+            0%,
+            100% {
+                height: 9px;
+                transform: scaleY(0.8);
+            }
+
+            50% {
+                height: 38px;
+                transform: scaleY(1);
+            }
+        }
+
+        @keyframes voiceWaveThinking {
+            0%,
+            100% {
+                height: 9px;
+                transform: scaleY(0.8);
+            }
+
+            50% {
+                height: 29px;
+                transform: scaleY(1);
+            }
+        }
+
+        @keyframes voiceWaveSpeaking {
+            0%,
+            100% {
+                height: 7px;
+                transform: scaleY(0.7);
+            }
+
+            25% {
+                height: 34px;
+                transform: scaleY(1);
+            }
+
+            50% {
+                height: 18px;
+                transform: scaleY(0.85);
+            }
+
+            75% {
+                height: 41px;
+                transform: scaleY(1);
+            }
+        }
+
+        @keyframes voiceWaveHalo {
+            0%,
+            100% {
+                transform: scale(0.82);
+                opacity: 0.35;
+            }
+
+            50% {
+                transform: scale(1.12);
+                opacity: 0.7;
+            }
+        }
+
+        @keyframes voiceWaveError {
+            0% {
+                transform: translateX(0);
+            }
+
+            25% {
+                transform: translateX(-4px);
+            }
+
+            50% {
+                transform: translateX(4px);
+            }
+
+            75% {
+                transform: translateX(-3px);
+            }
+
+            100% {
+                transform: translateX(0);
+            }
+        }
+
+        /* ================================================================
+           MOBILE
+           ================================================================ */
+
+        @media (max-width: 600px) {
+            #voiceWave {
+                right: 14px;
+                bottom: 14px;
+
+                width: 165px;
+                height: 68px;
+
+                border-radius: 20px;
+            }
+
+            .voice-wave-bars {
+                width: 112px;
+                height: 42px;
+
+                gap: 3px;
+            }
+
+            .voice-wave-bar {
+                width: 4px;
+            }
+
+            .voice-wave-label {
+                font-size: 9px;
+                bottom: 6px;
+            }
+        }
+
+        /* ================================================================
+           REDUCED MOTION
+           ================================================================ */
+
+        @media (prefers-reduced-motion: reduce) {
+            #voiceWave,
+            #voiceWave::before,
+            .voice-wave-bar {
+                animation: none !important;
+```
+
 
 
 // ============================================================================
